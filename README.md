@@ -68,7 +68,7 @@ Contributions to this project are welcome. Please fork the repository, make your
 
 ## License
 
-This project is open-sourced under the MIT License. See the LICENSE file for details.
+This project is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0)](LICENSE). See the LICENSE file for details.
 
 ## Acknowledgments
 
