@@ -107,18 +107,18 @@ def plot_inter_arrival_times_box(packet_data):
     return audio_fig, other_fig
 
 # Function to calculate and display summary statistics in Streamlit
-def display_summary_statistics(packet_data):
-    if 'audio' in packet_data and packet_data['audio']['inter_arrival_times']:
-        audio_times = packet_data['audio']['inter_arrival_times']
-        min_val = np.min(audio_times)
-        max_val = np.max(audio_times)
-        median_val = np.median(audio_times)
-        mean_val = np.mean(audio_times)
-        std_dev = np.std(audio_times)
+def display_summary_statistics(packet_data, packet_type):
+    if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
+        times = packet_data[packet_type]['inter_arrival_times']
+        min_val = np.min(times)
+        max_val = np.max(times)
+        median_val = np.median(times)
+        mean_val = np.mean(times)
+        std_dev = np.std(times)
 
         # Display the summary statistics in an info box
         st.info(f"""
-        **Audio Packet Inter-arrival Times Summary:**
+        **{packet_type.capitalize()} Packet Inter-arrival Times Summary:**
         - Minimum: {min_val:.3f} ms
         - Maximum: {max_val:.3f} ms
         - Median: {median_val:.3f} ms
@@ -152,9 +152,13 @@ if uploaded_file is not None:
         st.plotly_chart(audio_fig)
 
         # Display the summary statistics for audio packets
-        display_summary_statistics(packet_data)
+        display_summary_statistics(packet_data, 'audio')
 
         st.plotly_chart(other_fig)
+
+        # Check if PTP packets are in the data and display their statistics
+        if 'PTP' in packet_data:  # Replace 'PTP' with the correct key if different
+            display_summary_statistics(packet_data, 'PTP')
 
         # Delete the temporary file now that we're done with it
         os.remove(temp_file_path)
