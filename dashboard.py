@@ -78,9 +78,7 @@ def process_packets(capture):
     return packet_data
 
 
-
-
-# Function to create a Plotly box plot for inter-arrival times per packet type with log scale for audio
+# Function to create a Plotly box plot for inter-arrival times per packet type with log scale for non audio
 def plot_inter_arrival_times_box(packet_data):
     # Create box plot for other packet types
     other_fig = go.Figure()
@@ -222,8 +220,6 @@ def plot_inter_arrival_times_histogram(packet_data):
     )
 
     return fig
-
-
 
 
 # Streamlit interface
