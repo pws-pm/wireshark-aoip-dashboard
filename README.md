@@ -14,9 +14,9 @@ This repository contains a Streamlit application that analyzes packet captures (
 
 To install the necessary dependencies for this project, run the following command:
 
-\```bash
+```bash
 pip install -r requirements.txt
-\```
+```
 
 This will install all the libraries listed in the `requirements.txt` file.
 
