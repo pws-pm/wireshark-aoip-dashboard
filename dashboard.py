@@ -82,34 +82,6 @@ def process_packets(capture):
 
 # Function to create a Plotly box plot for inter-arrival times per packet type with log scale for audio
 def plot_inter_arrival_times_box(packet_data):
-    # Create box plot for audio packets with log scale
-    audio_fig = go.Figure()
-    if 'audio' in packet_data:
-        audio_times = packet_data['audio']['inter_arrival_times']
-        tooltip_texts = [
-            f"Packet Number: {info['packet_number']}<br>"
-            f"Source: {info['src_ip']}:{info['src_port']}<br>"
-            f"Destination: {info['dst_ip']}:{info['dst_port']}<br>"
-            f"Delta: {info.get('delta_ms', 'N/A')} ms"  # Using .get() with a default value
-            for info in packet_data['audio']['info']
-        ]
-        audio_fig.add_trace(go.Box(
-            y=audio_times,
-            name='Audio',
-            boxpoints='outliers',  # Show outliers
-            jitter=0.5,  # Add some jitter for better visualization
-            marker=dict(size=2),
-            text=tooltip_texts,
-            hoverinfo='text'
-        ))
-    audio_fig.update_layout(
-        title='Audio Packet Inter-arrival Times (ms)',
-        yaxis_title='Time (milliseconds)',
-        yaxis_type='log',  # Log scale
-        yaxis_tickformat='.3f',  # Format y-axis ticks to always show three decimal places
-        template='plotly_white'
-    )
-
     # Create box plot for other packet types
     other_fig = go.Figure()
     for ptype, data in packet_data.items():
@@ -127,7 +99,7 @@ def plot_inter_arrival_times_box(packet_data):
         template='plotly_white'
     )
 
-    return audio_fig, other_fig
+    return other_fig
 
 # Function to calculate and display summary statistics in Streamlit
 def display_summary_statistics(packet_data, packet_type):
@@ -196,6 +168,62 @@ def create_connections_dataframe(packet_data):
     # Display the DataFrame using Streamlit
     return df
 
+def plot_inter_arrival_times_histogram(packet_data):
+    if 'audio' not in packet_data:
+        return None
+
+    audio_times = packet_data['audio']['inter_arrival_times']
+    if not audio_times:
+        return None
+
+    # Since we are using a log scale, filter out any times that are 0
+    audio_times = [time for time in audio_times if time > 0]
+
+    # Calculate the number of bins to use
+    num_bins = 50
+
+    # Define bins for histogram with equal width in log space
+    min_time = min(audio_times)
+    max_time = max(audio_times)
+    log_min = np.log10(min_time)
+    log_max = np.log10(max_time)
+    log_bins = np.logspace(log_min, log_max, num=num_bins)
+
+    # Create the histogram data
+    histogram_data = np.histogram(audio_times, bins=log_bins)
+    bin_counts = histogram_data[0]
+    bin_edges = histogram_data[1]
+
+    # Use a scatter plot to simulate bars with 'lines+markers' and fill below the line
+    fig = go.Figure(data=go.Scatter(
+        x=bin_edges.repeat(2)[1:-1],
+        y=np.repeat(bin_counts, 2),
+        mode='lines',
+        line=dict(
+            color='rgba(0, 100, 80, .8)',  # Single color for all 'bars'
+            shape='hv'  # Create a horizontal line followed by a vertical line
+        ),
+        fill='tozeroy'  # Fill the area under the line
+    ))
+
+    # Update the layout to use log scales
+    fig.update_layout(
+        title='2D Histogram of Audio Packet Inter-arrival Times',
+        xaxis=dict(
+            title='Inter-arrival Time (ms)',
+            type='log',
+            tickformat='.3f'
+        ),
+        yaxis=dict(
+            title='Quantity',
+            type='log'
+        ),
+        template='plotly_white'
+    )
+
+    return fig
+
+
 
 
 # Streamlit interface
@@ -219,16 +247,17 @@ if uploaded_file is not None:
         # Add this to create and display the connections DataFrame
         connections_df = create_connections_dataframe(packet_data)
         st.dataframe(connections_df)
-        
-        # Plotting
-        audio_fig, other_fig = plot_inter_arrival_times_box(packet_data)
-        
-        # Display charts
-        st.plotly_chart(audio_fig)
+
+        # Display the histogram for audio packet inter-arrival times
+        histogram_fig = plot_inter_arrival_times_histogram(packet_data)
+        if histogram_fig is not None:
+            st.plotly_chart(histogram_fig)
 
         # Display the summary statistics for audio packets
         display_summary_statistics(packet_data, 'audio')
 
+        # Plotting
+        other_fig = plot_inter_arrival_times_box(packet_data)
         st.plotly_chart(other_fig)
 
         # Check if PTP packets are in the data and display their statistics
