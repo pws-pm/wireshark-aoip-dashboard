@@ -6,9 +6,8 @@ This repository contains a Streamlit application that analyzes packet captures (
 
 - Load and parse PCAP files using PyShark.
 - Calculate inter-arrival times for audio packets identified by a specific IP address pattern.
-- Display summary statistics for audio packet inter-arrival times.
-- Interactive box plots for audio and non-audio packet inter-arrival times with a logarithmic scale for audio packets.
-- Summary statistics for PTP (Precision Time Protocol) packets, if present in the capture.
+- Shows a connections list organised by ip and protocols
+- Display statistics for multicast audio and other protocol packet inter-arrival times.
 
 ## Installation
 
@@ -83,4 +82,4 @@ If you have any questions or feedback, please open an issue in the GitHub issue 
 
 ---
 
-*This README was generated using OpenAI's language model.*
+*Most of the code was generated with GPT4, so it might be weird or need optimization.*
