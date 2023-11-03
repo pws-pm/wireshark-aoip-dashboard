@@ -126,6 +126,53 @@ def display_summary_statistics(packet_data, packet_type):
         - Standard Deviation: {std_dev:.3f} ms
         """)
 
+def create_connections_dataframe(packet_data):
+    # Dictionary to hold the connection information
+    connection_info = {}
+
+    # Iterate over the packet information to fill the connection_info
+    for ptype, data in packet_data.items():
+        for info in data['info']:
+            # Skip packets without IP information
+            if info['src_ip'] is None or info['dst_ip'] is None:
+                continue
+
+            src_dst_pair = (info['src_ip'], info['dst_ip'])
+            if src_dst_pair not in connection_info:
+                connection_info[src_dst_pair] = {'total_packets': 0, 'protocols': {}}
+            
+            # Increment the total packet count for the source-destination pair
+            connection_info[src_dst_pair]['total_packets'] += 1
+            
+            # Classify packets with destination IP starting with '239.' as 'Multicast Audio'
+            protocol = 'Multicast Audio' if info['dst_ip'].startswith('239.') else ptype
+            
+            # Increment the packet count for the specific protocol
+            if protocol not in connection_info[src_dst_pair]['protocols']:
+                connection_info[src_dst_pair]['protocols'][protocol] = 0
+            connection_info[src_dst_pair]['protocols'][protocol] += 1
+
+    # Prepare the data for DataFrame creation
+    rows = []
+    for (src_ip, dst_ip), info in connection_info.items():
+        total_packets = info['total_packets']
+        for protocol, count in info['protocols'].items():
+            percentage = (count / total_packets) * 100
+            rows.append({
+                'Source IP': src_ip,
+                'Destination IP': dst_ip,
+                'Protocol': protocol,
+                'Packet Count': count,
+                'Percentage': percentage
+            })
+
+    # Create the DataFrame
+    df = pd.DataFrame(rows)
+    df.sort_values(by='Percentage', ascending=False, inplace=True)
+
+    # Display the DataFrame using Streamlit
+    return df
+
 
 # Streamlit interface
 st.title("Packet Capture Analysis Dashboard")
@@ -144,6 +191,10 @@ if uploaded_file is not None:
         
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
+
+        # Add this to create and display the connections DataFrame
+        connections_df = create_connections_dataframe(packet_data)
+        st.dataframe(connections_df)
         
         # Plotting
         audio_fig, other_fig = plot_inter_arrival_times_box(packet_data)
