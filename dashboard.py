@@ -12,49 +12,72 @@ def load_capture(file_path):
 
 def process_packets(capture):
     packet_data = {}
-    last_audio_timestamp = None
+    last_timestamps = {}
 
     for packet_number, packet in enumerate(capture, start=1):
-        if 'IP' in packet and packet.ip.dst.startswith('239.'):
-            packet_type = 'audio'
+        if 'IP' in packet:
+            packet_type = 'audio' if packet.ip.dst.startswith('239.') else packet.highest_layer
             packet_info = {
                 'packet_number': packet_number,
                 'src_ip': packet.ip.src,
                 'dst_ip': packet.ip.dst,
-                'src_port': packet[packet.transport_layer].srcport,
-                'dst_port': packet[packet.transport_layer].dstport,
+                'src_port': packet[packet.transport_layer].srcport if packet.transport_layer else None,
+                'dst_port': packet[packet.transport_layer].dstport if packet.transport_layer else None,
             }
-            
-            if last_audio_timestamp is not None:
-                delta = packet.frame_info.time_delta_displayed
-                delta_ms = float(delta) * 1000  # Convert to milliseconds
-                packet_info['delta_ms'] = f"{delta_ms:.3f}"
-                packet_info['sniff_timestamp'] = float(packet.sniff_timestamp)
 
-                if packet_type not in packet_data:
-                    packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
-                packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
-                packet_data[packet_type]['info'].append(packet_info)
+            # Handle timestamps and inter-arrival times
+            current_timestamp = float(packet.sniff_timestamp)
+            if packet_type not in last_timestamps:
+                last_timestamps[packet_type] = current_timestamp
+            else:
+                delta_ms = (current_timestamp - last_timestamps[packet_type]) * 1000
+                packet_info['delta_ms'] = delta_ms
+                last_timestamps[packet_type] = current_timestamp
 
-            last_audio_timestamp = float(packet.sniff_timestamp)
-        else:
-            # Handle non-audio packets
-            packet_type = packet.highest_layer
+            # Initialize packet data for this type if not already done
             if packet_type not in packet_data:
-                packet_data[packet_type] = {'timestamps': [], 'info': []}
-            timestamp = float(packet.sniff_timestamp)
-            packet_data[packet_type]['timestamps'].append(timestamp)
-            # Skip further processing for non-audio packets
-            continue
+                packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
 
-    # Calculate inter-arrival times for non-audio packets using sniff timestamps
-    for ptype, data in packet_data.items():
-        if ptype != 'audio':
-            timestamps = data['timestamps']
-            inter_arrival_times = np.diff(timestamps) * 1000  # Convert to milliseconds
-            packet_data[ptype]['inter_arrival_times'] = list(inter_arrival_times)
+            # Store packet info
+            packet_data[packet_type]['info'].append(packet_info)
+
+            # Store inter-arrival times
+            if 'delta_ms' in packet_info:
+                packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
+        else:
+            # Handle non-IP packets
+            packet_type = 'Non-IP'
+            packet_info = {
+                'packet_number': packet_number,
+                'src_ip': None,
+                'dst_ip': None,
+                'src_port': None,
+                'dst_port': None,
+            }
+
+            # Initialize packet data for this type if not already done
+            if packet_type not in packet_data:
+                packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
+
+            # Handle non-IP timestamps and inter-arrival times
+            current_timestamp = float(packet.sniff_timestamp)
+            if packet_type not in last_timestamps:
+                last_timestamps[packet_type] = current_timestamp
+            else:
+                delta_ms = (current_timestamp - last_timestamps[packet_type]) * 1000
+                packet_info['delta_ms'] = delta_ms
+                last_timestamps[packet_type] = current_timestamp
+
+            # Store packet info
+            packet_data[packet_type]['info'].append(packet_info)
+
+            # Store inter-arrival times
+            if 'delta_ms' in packet_info:
+                packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
 
     return packet_data
+
+
 
 
 # Function to create a Plotly box plot for inter-arrival times per packet type with log scale for audio
@@ -67,7 +90,7 @@ def plot_inter_arrival_times_box(packet_data):
             f"Packet Number: {info['packet_number']}<br>"
             f"Source: {info['src_ip']}:{info['src_port']}<br>"
             f"Destination: {info['dst_ip']}:{info['dst_port']}<br>"
-            f"Delta: {info['delta_ms']} ms"
+            f"Delta: {info.get('delta_ms', 'N/A')} ms"  # Using .get() with a default value
             for info in packet_data['audio']['info']
         ]
         audio_fig.add_trace(go.Box(
