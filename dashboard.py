@@ -7,38 +7,38 @@ import os
 
 # Function to load the pcap file using PyShark
 def load_capture(file_path):
-    # We use only_summaries=False to get detailed packet info for non-audio packets
+    # We use only_summaries=False to get detailed packet info
     return pyshark.FileCapture(file_path, only_summaries=False)
 
-# Function to process packets and calculate inter-arrival times using the delta attribute for audio
 def process_packets(capture):
     packet_data = {}
     last_audio_timestamp = None
 
-    for packet in capture:
-        # Categorize as 'audio' if the destination IP starts with '239.'
+    for packet_number, packet in enumerate(capture, start=1):
         if 'IP' in packet and packet.ip.dst.startswith('239.'):
             packet_type = 'audio'
+            packet_info = {
+                'packet_number': packet_number,
+                'src_ip': packet.ip.src,
+                'dst_ip': packet.ip.dst,
+                'src_port': packet[packet.transport_layer].srcport,
+                'dst_port': packet[packet.transport_layer].dstport,
+            }
+            
             if last_audio_timestamp is not None:
-                # Use the delta attribute specifically for audio packets
                 delta = packet.frame_info.time_delta_displayed
                 delta_ms = float(delta) * 1000  # Convert to milliseconds
-            else:
-                delta_ms = 0
+                packet_info['delta_ms'] = f"{delta_ms:.3f}"
+                packet_info['sniff_timestamp'] = float(packet.sniff_timestamp)
+
+                if packet_type not in packet_data:
+                    packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
+                packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
+                packet_data[packet_type]['info'].append(packet_info)
+
             last_audio_timestamp = float(packet.sniff_timestamp)
-            # Add source and destination IP and port for tooltip
-            src_ip = packet.ip.src
-            dst_ip = packet.ip.dst
-            src_port = packet[packet.transport_layer].srcport
-            dst_port = packet[packet.transport_layer].dstport
-            packet_info = {
-                'src_ip': src_ip,
-                'dst_ip': dst_ip,
-                'src_port': src_port,
-                'dst_port': dst_port,
-                'delta_ms': f"{delta_ms:.3f}"
-            }
         else:
+            # Handle non-audio packets
             packet_type = packet.highest_layer
             if packet_type not in packet_data:
                 packet_data[packet_type] = {'timestamps': [], 'info': []}
@@ -46,12 +46,6 @@ def process_packets(capture):
             packet_data[packet_type]['timestamps'].append(timestamp)
             # Skip further processing for non-audio packets
             continue
-
-        if packet_type not in packet_data:
-            packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
-        
-        packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
-        packet_data[packet_type]['info'].append(packet_info)
 
     # Calculate inter-arrival times for non-audio packets using sniff timestamps
     for ptype, data in packet_data.items():
@@ -62,15 +56,20 @@ def process_packets(capture):
 
     return packet_data
 
+
 # Function to create a Plotly box plot for inter-arrival times per packet type with log scale for audio
 def plot_inter_arrival_times_box(packet_data):
     # Create box plot for audio packets with log scale
     audio_fig = go.Figure()
     if 'audio' in packet_data:
         audio_times = packet_data['audio']['inter_arrival_times']
-        tooltip_texts = [f"Packet: {i+1}<br>Source: {info['src_ip']}:{info['src_port']}<br>"
-                         f"Destination: {info['dst_ip']}:{info['dst_port']}<br>Delta: {info['delta_ms']} ms"
-                         for i, info in enumerate(packet_data['audio']['info'])]
+        tooltip_texts = [
+            f"Packet Number: {info['packet_number']}<br>"
+            f"Source: {info['src_ip']}:{info['src_port']}<br>"
+            f"Destination: {info['dst_ip']}:{info['dst_port']}<br>"
+            f"Delta: {info['delta_ms']} ms"
+            for info in packet_data['audio']['info']
+        ]
         audio_fig.add_trace(go.Box(
             y=audio_times,
             name='Audio',
@@ -154,7 +153,7 @@ if uploaded_file is not None:
 
         # Display the summary statistics for audio packets
         display_summary_statistics(packet_data)
-        
+
         st.plotly_chart(other_fig)
 
         # Delete the temporary file now that we're done with it
