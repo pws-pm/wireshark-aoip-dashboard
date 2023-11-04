@@ -11,7 +11,11 @@ def load_capture(file_path):
     # We use only_summaries=False to get detailed packet info
     return pyshark.FileCapture(file_path, only_summaries=False)
 
+ptp_message_count = 0  #debug
+
 def classify_packet(packet, packet_number):
+    global ptp_message_count #debug
+
     # Determines the type of the packet and gathers basic info
     packet_type = 'Non-IP'
     packet_info = {'packet_number': packet_number}
@@ -28,6 +32,7 @@ def classify_packet(packet, packet_number):
     # Check for PTP layer and classify PTP messages
     if hasattr(packet, 'ptp'):
         ptp_message_type = packet.ptp.get_field_value('messageType')
+        print(f"ptp packet found, messageType={ptp_message_type}")
         if ptp_message_type:
             if 'Sync Message (0x0)' in ptp_message_type:
                 packet_type = 'PTP Sync'
@@ -45,6 +50,12 @@ def classify_packet(packet, packet_number):
 
     # Add packet_type to packet_info
     packet_info['packet_type'] = packet_type
+
+    # debug
+    if packet_type in ['PTP Sync', 'PTP Announce']:
+        ptp_message_count += 1
+        if ptp_message_count <= 2:
+            print(f"Packet #{packet_number}: Type={packet_type}, Src IP={packet_info.get('src_ip')}, Dst IP={packet_info.get('dst_ip')}")
 
     return packet_type, packet_info
 
