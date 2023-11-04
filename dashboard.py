@@ -16,7 +16,7 @@ def classify_packet(packet, packet_number):
     packet_type = 'Non-IP'
     packet_info = {'packet_number': packet_number}
     
-    if 'IP' in packet:
+    if hasattr(packet, 'ip'):
         packet_type = 'audio' if packet.ip.dst.startswith('239.') else packet.highest_layer
         packet_info.update({
             'src_ip': packet.ip.src,
@@ -25,7 +25,26 @@ def classify_packet(packet, packet_number):
             'dst_port': packet[packet.transport_layer].dstport if packet.transport_layer else None,
         })
 
+    # Check for PTP layer and classify PTP messages
+    if hasattr(packet, 'ptp'):
+        ptp_message_type = packet.ptp.messageType.replace(' ', '').split(':')[1]
+        # Check for PTP Announce and Sync messages based on messageType
+        if ptp_message_type == "SyncMessage(0x0)":
+            packet_type = 'PTP Sync'
+        elif ptp_message_type == "AnnounceMessage(0xb)":
+            packet_type = 'PTP Announce'
+
+        # Update packet_info with PTP specific details
+        packet_info.update({
+            'sequence_id': packet.ptp.sequenceId,
+            'source_port_id': packet.ptp.SourcePortID,
+            'clock_identity': packet.ptp.ClockIdentity,
+            'origin_timestamp_seconds': packet.ptp.originTimestamp.seconds,
+            'origin_timestamp_nanoseconds': packet.ptp.originTimestamp.nanoseconds,
+        })
+
     return packet_type, packet_info
+
 
 def calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps):
     # Calculates and updates the inter-arrival time for a packet
@@ -43,10 +62,15 @@ def initialize_packet_data_structure(packet_data, packet_type):
         packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
 
 def update_packet_data_structure(packet_data, packet_type, packet_info):
+    # Initialize the packet type key if it does not exist
+    if packet_type not in packet_data:
+        packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
+
     # Updates the packet data structure with new packet info
     packet_data[packet_type]['info'].append(packet_info)
     if 'delta_ms' in packet_info:
         packet_data[packet_type]['inter_arrival_times'].append(packet_info['delta_ms'])
+
 
 # The refactored process_packets function
 def process_packets(capture):
@@ -56,10 +80,10 @@ def process_packets(capture):
     for packet_number, packet in enumerate(capture, start=1):
         packet_type, packet_info = classify_packet(packet, packet_number)
         calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps)
-        initialize_packet_data_structure(packet_data, packet_type)
         update_packet_data_structure(packet_data, packet_type, packet_info)
     
     return packet_data
+
 
 
 # Function to create a Plotly box plot for inter-arrival times per packet type with log scale for non audio
@@ -230,7 +254,7 @@ if uploaded_file is not None:
             f.write(uploaded_file.getvalue())
         
         capture = load_capture(temp_file_path)
-        
+
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
 
