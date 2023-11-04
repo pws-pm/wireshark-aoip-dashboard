@@ -28,11 +28,10 @@ def classify_packet(packet, packet_number):
     # Check for PTP layer and classify PTP messages
     if hasattr(packet, 'ptp'):
         ptp_message_type = packet.ptp.get_field_value('messageType')
-        if ptp_message_type is not None:
-            ptp_message_type = ptp_message_type.replace(' ', '').split(':')[1]
-            if ptp_message_type == "SyncMessage(0x0)":
+        if ptp_message_type:
+            if 'Sync Message (0x0)' in ptp_message_type:
                 packet_type = 'PTP Sync'
-            elif ptp_message_type == "AnnounceMessage(0xb)":
+            elif 'Announce Message (0xb)' in ptp_message_type:
                 packet_type = 'PTP Announce'
         
             # Update packet_info with PTP specific details
