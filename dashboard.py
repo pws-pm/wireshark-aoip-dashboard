@@ -27,23 +27,25 @@ def classify_packet(packet, packet_number):
 
     # Check for PTP layer and classify PTP messages
     if hasattr(packet, 'ptp'):
-        ptp_message_type = packet.ptp.messageType.replace(' ', '').split(':')[1]
-        # Check for PTP Announce and Sync messages based on messageType
-        if ptp_message_type == "SyncMessage(0x0)":
-            packet_type = 'PTP Sync'
-        elif ptp_message_type == "AnnounceMessage(0xb)":
-            packet_type = 'PTP Announce'
-
-        # Update packet_info with PTP specific details
-        packet_info.update({
-            'sequence_id': packet.ptp.sequenceId,
-            'source_port_id': packet.ptp.SourcePortID,
-            'clock_identity': packet.ptp.ClockIdentity,
-            'origin_timestamp_seconds': packet.ptp.originTimestamp.seconds,
-            'origin_timestamp_nanoseconds': packet.ptp.originTimestamp.nanoseconds,
-        })
+        ptp_message_type = packet.ptp.get_field_value('messageType')
+        if ptp_message_type is not None:
+            ptp_message_type = ptp_message_type.replace(' ', '').split(':')[1]
+            if ptp_message_type == "SyncMessage(0x0)":
+                packet_type = 'PTP Sync'
+            elif ptp_message_type == "AnnounceMessage(0xb)":
+                packet_type = 'PTP Announce'
+        
+            # Update packet_info with PTP specific details
+            packet_info.update({
+                'sequence_id': packet.ptp.get_field_value('sequenceId'),
+                'source_port_id': packet.ptp.get_field_value('SourcePortID'),
+                'clock_identity': packet.ptp.get_field_value('ClockIdentity'),
+                'origin_timestamp_seconds': packet.ptp.get_field_value('originTimestamp.seconds'),
+                'origin_timestamp_nanoseconds': packet.ptp.get_field_value('originTimestamp.nanoseconds'),
+            })
 
     return packet_type, packet_info
+
 
 
 def calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps):
