@@ -12,6 +12,20 @@ def load_capture(file_path):
     return pyshark.FileCapture(file_path, only_summaries=False)
 
 def classify_packet(packet, packet_number):
+    # Dictionary of PTP message types
+    ptp_message_types = {
+        '0x00': 'PTP_Sync',
+        '0x01': 'PTP_Delay_Req',
+        '0x02': 'PTP_Pdelay_Req',
+        '0x03': 'PTP_Pdelay_Resp',
+        '0x08': 'PTP_Follow_Up',
+        '0x09': 'PTP_Delay_Resp',
+        '0x0a': 'PTP_Pdelay_Resp_Follow_Up',
+        '0x0b': 'PTP_Announce',
+        '0x0c': 'PTP_Signaling',
+        '0x0d': 'PTP_Management',
+        # Add any additional or custom message types here
+    }
 
     # Determines the type of the packet and gathers basic info
     packet_type = 'Non-IP'
@@ -29,11 +43,7 @@ def classify_packet(packet, packet_number):
     # Check for PTP layer and classify PTP messages
     if hasattr(packet, 'ptp') and packet.ptp:
         ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
-        
-        if ptp_message_type_code == '0x00':
-            packet_type = 'PTP_Sync'
-        elif ptp_message_type_code == '0x0b':
-            packet_type = 'PTP_Announce'
+        packet_type = ptp_message_types.get(ptp_message_type_code, 'Unknown_PTP_Type')
 
         # Update packet_info with PTP specific details
         packet_info.update({
@@ -48,6 +58,7 @@ def classify_packet(packet, packet_number):
     packet_info['packet_type'] = packet_type
 
     return packet_type, packet_info
+
 
 
 
