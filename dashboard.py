@@ -103,9 +103,24 @@ def display_summary_statistics(packet_data, packet_type):
         - Standard Deviation: {std_dev:.3f} ms
         """)
 
-def create_connections_dataframe(packet_data):
-    # Use defaultdict to simplify the creation of nested dictionaries
-    connection_info = defaultdict(lambda: {'total_packets': 0, 'protocols': defaultdict(int)})
+def calculate_bandwidth(capture):
+    # Dictionary to store bytes per source-destination pair
+    bytes_per_connection = defaultdict(int)
+
+    for packet in capture:
+        if 'IP' in packet:
+            src_dst_pair = (packet.ip.src, packet.ip.dst)
+            frame_len = int(packet.length)
+            bytes_per_connection[src_dst_pair] += frame_len
+
+    # Convert bytes to Mbps (1 byte = 8 bits, 1 Mbps = 1e6 bits per second)
+    bandwidth_per_connection = {pair: (bytes * 8) / 1e6 for pair, bytes in bytes_per_connection.items()}
+    return bandwidth_per_connection
+
+def create_connections_dataframe(packet_data, capture):
+    connection_info = defaultdict(lambda: {'total_packets': 0, 'protocols': defaultdict(int), 'total_bytes': 0})
+    # Add a call to calculate_bandwidth
+    bandwidth_per_connection = calculate_bandwidth(capture)
 
     # List to store rows for DataFrame creation
     rows = []
@@ -126,12 +141,15 @@ def create_connections_dataframe(packet_data):
         total_packets = info['total_packets']
         for protocol, count in info['protocols'].items():
             percentage = (count / total_packets) * 100
+            # Retrieve the bandwidth using the src_dst_pair
+            bandwidth = bandwidth_per_connection.get((src_ip, dst_ip), 0)
             rows.append({
                 'Source IP': src_ip,
                 'Destination IP': dst_ip,
                 'Protocol': protocol,
                 'Packet Count': count,
-                'Percentage': percentage
+                'Percentage': percentage,
+                'Bandwidth (Mbps)': bandwidth  # Add the bandwidth data here
             })
 
     # Convert the list of dictionaries to a DataFrame in one go
@@ -217,7 +235,7 @@ if uploaded_file is not None:
         packet_data = process_packets(capture)
 
         # Add this to create and display the connections DataFrame
-        connections_df = create_connections_dataframe(packet_data)
+        connections_df = create_connections_dataframe(packet_data, capture)
         st.dataframe(connections_df)
 
         # Display the histogram for audio packet inter-arrival times
