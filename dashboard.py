@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import numpy as np
 import os
+from collections import defaultdict
 
 # Function to load the pcap file using PyShark
 def load_capture(file_path):
@@ -103,33 +104,24 @@ def display_summary_statistics(packet_data, packet_type):
         """)
 
 def create_connections_dataframe(packet_data):
-    # Dictionary to hold the connection information
-    connection_info = {}
+    # Use defaultdict to simplify the creation of nested dictionaries
+    connection_info = defaultdict(lambda: {'total_packets': 0, 'protocols': defaultdict(int)})
 
-    # Iterate over the packet information to fill the connection_info
+    # List to store rows for DataFrame creation
+    rows = []
+
     for ptype, data in packet_data.items():
         for info in data['info']:
-            # Skip packets without IP information
-            if 'src_ip' not in info or 'dst_ip' not in info or info['src_ip'] is None or info['dst_ip'] is None:
-                continue
-
-            src_dst_pair = (info['src_ip'], info['dst_ip'])
-            if src_dst_pair not in connection_info:
-                connection_info[src_dst_pair] = {'total_packets': 0, 'protocols': {}}
-            
-            # Increment the total packet count for the source-destination pair
-            connection_info[src_dst_pair]['total_packets'] += 1
-            
-            # Classify packets with destination IP starting with '239.' as 'Multicast Audio'
-            protocol = 'Multicast Audio' if info['dst_ip'].startswith('239.') else ptype
-            
-            # Increment the packet count for the specific protocol
-            if protocol not in connection_info[src_dst_pair]['protocols']:
-                connection_info[src_dst_pair]['protocols'][protocol] = 0
-            connection_info[src_dst_pair]['protocols'][protocol] += 1
+            # Ensure 'src_ip' and 'dst_ip' are present and not None
+            if info.get('src_ip') and info.get('dst_ip'):
+                src_dst_pair = (info['src_ip'], info['dst_ip'])
+                connection_info[src_dst_pair]['total_packets'] += 1
+                
+                # Classify the protocol based on the destination IP
+                protocol = 'Multicast Audio' if info['dst_ip'].startswith('239.') else ptype
+                connection_info[src_dst_pair]['protocols'][protocol] += 1
 
     # Prepare the data for DataFrame creation
-    rows = []
     for (src_ip, dst_ip), info in connection_info.items():
         total_packets = info['total_packets']
         for protocol, count in info['protocols'].items():
@@ -142,11 +134,12 @@ def create_connections_dataframe(packet_data):
                 'Percentage': percentage
             })
 
-    # Create the DataFrame
+    # Convert the list of dictionaries to a DataFrame in one go
     df = pd.DataFrame(rows)
+
+    # Sort the DataFrame
     df.sort_values(by='Percentage', ascending=False, inplace=True)
 
-    # Display the DataFrame using Streamlit
     return df
 
 def plot_inter_arrival_times_histogram(packet_data):
