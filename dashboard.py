@@ -43,7 +43,11 @@ def classify_packet(packet, packet_number):
                 'origin_timestamp_nanoseconds': packet.ptp.get_field_value('originTimestamp.nanoseconds'),
             })
 
+    # Add packet_type to packet_info
+    packet_info['packet_type'] = packet_type
+
     return packet_type, packet_info
+
 
 
 
@@ -240,6 +244,29 @@ def plot_inter_arrival_times_histogram(packet_data):
 
     return fig
 
+def create_ptp_summary_dataframe(packet_data):
+    # Extract PTP packets info
+    ptp_packets_info = [
+        info for ptype, data in packet_data.items() 
+        if 'PTP' in ptype for info in data['info']
+    ]
+
+    # Create a DataFrame from the PTP packets info
+    ptp_df = pd.DataFrame(ptp_packets_info)
+
+    # Check if 'packet_type' column exists in the DataFrame
+    if 'packet_type' not in ptp_df.columns:
+        raise ValueError("The 'packet_type' column is missing from the DataFrame. Ensure that packet classification is performed correctly.")
+
+    # Filter out the DataFrame for only Sync and Announce messages
+    ptp_df = ptp_df[ptp_df['packet_type'].isin(['PTP Sync', 'PTP Announce'])]
+
+    # Group by packet_type and src_ip, and count the occurrences
+    summary_df = ptp_df.groupby(['packet_type', 'src_ip']).size().reset_index(name='count')
+
+    return summary_df
+
+
 
 # Streamlit interface
 st.title("Packet Capture Analysis Dashboard")
@@ -262,6 +289,9 @@ if uploaded_file is not None:
         # Add this to create and display the connections DataFrame
         connections_df = create_connections_dataframe(packet_data, capture)
         st.dataframe(connections_df)
+
+        ptp_summary_df = create_ptp_summary_dataframe(packet_data)
+        st.dataframe(ptp_summary_df)
 
         # Display the histogram for audio packet inter-arrival times
         histogram_fig = plot_inter_arrival_times_histogram(packet_data)
