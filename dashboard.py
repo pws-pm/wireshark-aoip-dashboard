@@ -11,10 +11,7 @@ def load_capture(file_path):
     # We use only_summaries=False to get detailed packet info
     return pyshark.FileCapture(file_path, only_summaries=False)
 
-ptp_message_count = 0  #debug
-
 def classify_packet(packet, packet_number):
-    global ptp_message_count #debug
 
     # Determines the type of the packet and gathers basic info
     packet_type = 'Non-IP'
@@ -30,34 +27,29 @@ def classify_packet(packet, packet_number):
         })
 
     # Check for PTP layer and classify PTP messages
-    if hasattr(packet, 'ptp'):
-        ptp_message_type = packet.ptp.get_field_value('messageType')
-        print(f"ptp packet found, messageType={ptp_message_type}")
-        if ptp_message_type:
-            if 'Sync Message (0x0)' in ptp_message_type:
-                packet_type = 'PTP Sync'
-            elif 'Announce Message (0xb)' in ptp_message_type:
-                packet_type = 'PTP Announce'
+    if hasattr(packet, 'ptp') and packet.ptp:
+        ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
         
-            # Update packet_info with PTP specific details
-            packet_info.update({
-                'sequence_id': packet.ptp.get_field_value('sequenceId'),
-                'source_port_id': packet.ptp.get_field_value('SourcePortID'),
-                'clock_identity': packet.ptp.get_field_value('ClockIdentity'),
-                'origin_timestamp_seconds': packet.ptp.get_field_value('originTimestamp.seconds'),
-                'origin_timestamp_nanoseconds': packet.ptp.get_field_value('originTimestamp.nanoseconds'),
-            })
+        if ptp_message_type_code == '0x00':
+            packet_type = 'PTP_Sync'
+        elif ptp_message_type_code == '0x0b':
+            packet_type = 'PTP_Announce'
+
+        # Update packet_info with PTP specific details
+        packet_info.update({
+            'sequence_id': packet.ptp.get_field_value('ptp.v2.sequenceid'),
+            'source_port_id': packet.ptp.get_field_value('ptp.v2.sourceportid'),
+            'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity'),
+            'origin_timestamp_seconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'),
+            'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'),
+        })
 
     # Add packet_type to packet_info
     packet_info['packet_type'] = packet_type
 
-    # debug
-    if packet_type in ['PTP Sync', 'PTP Announce']:
-        ptp_message_count += 1
-        if ptp_message_count <= 2:
-            print(f"Packet #{packet_number}: Type={packet_type}, Src IP={packet_info.get('src_ip')}, Dst IP={packet_info.get('dst_ip')}")
-
     return packet_type, packet_info
+
+
 
 
 
@@ -133,15 +125,18 @@ def display_summary_statistics(packet_data, packet_type):
         mean_val = np.mean(times)
         std_dev = np.std(times)
 
-        # Display the summary statistics in an info box
-        st.info(f"""
-        **{packet_type.capitalize()} Packet Inter-arrival Times Summary:**
-        - Minimum: {min_val:.3f} ms
-        - Maximum: {max_val:.3f} ms
-        - Median: {median_val:.3f} ms
-        - Mean: {mean_val:.3f} ms
-        - Standard Deviation: {std_dev:.3f} ms
-        """)
+        # Create a DataFrame for the summary statistics
+        summary_df = pd.DataFrame({
+            'Minimum (ms)': [f"{min_val:.3f}"],
+            'Maximum (ms)': [f"{max_val:.3f}"],
+            'Median (ms)': [f"{median_val:.3f}"],
+            'Mean (ms)': [f"{mean_val:.3f}"],
+            'Std Deviation (ms)': [f"{std_dev:.3f}"]
+        })
+
+        # Display the DataFrame
+        st.write(f"{packet_type.capitalize()} Packet Inter-arrival Times Summary:")
+        st.dataframe(summary_df)
 
 def calculate_bandwidth(capture):
     # Dictionary to store bytes per source-destination pair
@@ -255,30 +250,6 @@ def plot_inter_arrival_times_histogram(packet_data):
 
     return fig
 
-def create_ptp_summary_dataframe(packet_data):
-    # Extract PTP packets info
-    ptp_packets_info = [
-        info for ptype, data in packet_data.items() 
-        if 'PTP' in ptype for info in data['info']
-    ]
-
-    # Create a DataFrame from the PTP packets info
-    ptp_df = pd.DataFrame(ptp_packets_info)
-
-    # Check if 'packet_type' column exists in the DataFrame
-    if 'packet_type' not in ptp_df.columns:
-        raise ValueError("The 'packet_type' column is missing from the DataFrame. Ensure that packet classification is performed correctly.")
-
-    # Filter out the DataFrame for only Sync and Announce messages
-    ptp_df = ptp_df[ptp_df['packet_type'].isin(['PTP Sync', 'PTP Announce'])]
-
-    # Group by packet_type and src_ip, and count the occurrences
-    summary_df = ptp_df.groupby(['packet_type', 'src_ip']).size().reset_index(name='count')
-
-    return summary_df
-
-
-
 # Streamlit interface
 st.title("Packet Capture Analysis Dashboard")
 
@@ -301,9 +272,6 @@ if uploaded_file is not None:
         connections_df = create_connections_dataframe(packet_data, capture)
         st.dataframe(connections_df)
 
-        ptp_summary_df = create_ptp_summary_dataframe(packet_data)
-        st.dataframe(ptp_summary_df)
-
         # Display the histogram for audio packet inter-arrival times
         histogram_fig = plot_inter_arrival_times_histogram(packet_data)
         if histogram_fig is not None:
@@ -317,8 +285,8 @@ if uploaded_file is not None:
         st.plotly_chart(other_fig)
 
         # Check if PTP packets are in the data and display their statistics
-        if 'PTP' in packet_data:  # Replace 'PTP' with the correct key if different
-            display_summary_statistics(packet_data, 'PTP')
+        if 'PTP_Sync' in packet_data:
+            display_summary_statistics(packet_data, 'PTP_Sync')
 
         # Delete the temporary file now that we're done with it
         os.remove(temp_file_path)
