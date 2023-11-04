@@ -10,71 +10,54 @@ def load_capture(file_path):
     # We use only_summaries=False to get detailed packet info
     return pyshark.FileCapture(file_path, only_summaries=False)
 
+def classify_packet(packet, packet_number):
+    # Determines the type of the packet and gathers basic info
+    packet_type = 'Non-IP'
+    packet_info = {'packet_number': packet_number}
+    
+    if 'IP' in packet:
+        packet_type = 'audio' if packet.ip.dst.startswith('239.') else packet.highest_layer
+        packet_info.update({
+            'src_ip': packet.ip.src,
+            'dst_ip': packet.ip.dst,
+            'src_port': packet[packet.transport_layer].srcport if packet.transport_layer else None,
+            'dst_port': packet[packet.transport_layer].dstport if packet.transport_layer else None,
+        })
+
+    return packet_type, packet_info
+
+def calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps):
+    # Calculates and updates the inter-arrival time for a packet
+    current_timestamp = float(packet.sniff_timestamp)
+    if packet_type not in last_timestamps:
+        last_timestamps[packet_type] = current_timestamp
+    else:
+        delta_ms = (current_timestamp - last_timestamps[packet_type]) * 1000
+        packet_info['delta_ms'] = delta_ms
+        last_timestamps[packet_type] = current_timestamp
+
+def initialize_packet_data_structure(packet_data, packet_type):
+    # Initializes packet data structure if it doesn't exist
+    if packet_type not in packet_data:
+        packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
+
+def update_packet_data_structure(packet_data, packet_type, packet_info):
+    # Updates the packet data structure with new packet info
+    packet_data[packet_type]['info'].append(packet_info)
+    if 'delta_ms' in packet_info:
+        packet_data[packet_type]['inter_arrival_times'].append(packet_info['delta_ms'])
+
+# The refactored process_packets function
 def process_packets(capture):
     packet_data = {}
     last_timestamps = {}
 
     for packet_number, packet in enumerate(capture, start=1):
-        if 'IP' in packet:
-            packet_type = 'audio' if packet.ip.dst.startswith('239.') else packet.highest_layer
-            packet_info = {
-                'packet_number': packet_number,
-                'src_ip': packet.ip.src,
-                'dst_ip': packet.ip.dst,
-                'src_port': packet[packet.transport_layer].srcport if packet.transport_layer else None,
-                'dst_port': packet[packet.transport_layer].dstport if packet.transport_layer else None,
-            }
-
-            # Handle timestamps and inter-arrival times
-            current_timestamp = float(packet.sniff_timestamp)
-            if packet_type not in last_timestamps:
-                last_timestamps[packet_type] = current_timestamp
-            else:
-                delta_ms = (current_timestamp - last_timestamps[packet_type]) * 1000
-                packet_info['delta_ms'] = delta_ms
-                last_timestamps[packet_type] = current_timestamp
-
-            # Initialize packet data for this type if not already done
-            if packet_type not in packet_data:
-                packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
-
-            # Store packet info
-            packet_data[packet_type]['info'].append(packet_info)
-
-            # Store inter-arrival times
-            if 'delta_ms' in packet_info:
-                packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
-        else:
-            # Handle non-IP packets
-            packet_type = 'Non-IP'
-            packet_info = {
-                'packet_number': packet_number,
-                'src_ip': None,
-                'dst_ip': None,
-                'src_port': None,
-                'dst_port': None,
-            }
-
-            # Initialize packet data for this type if not already done
-            if packet_type not in packet_data:
-                packet_data[packet_type] = {'inter_arrival_times': [], 'info': []}
-
-            # Handle non-IP timestamps and inter-arrival times
-            current_timestamp = float(packet.sniff_timestamp)
-            if packet_type not in last_timestamps:
-                last_timestamps[packet_type] = current_timestamp
-            else:
-                delta_ms = (current_timestamp - last_timestamps[packet_type]) * 1000
-                packet_info['delta_ms'] = delta_ms
-                last_timestamps[packet_type] = current_timestamp
-
-            # Store packet info
-            packet_data[packet_type]['info'].append(packet_info)
-
-            # Store inter-arrival times
-            if 'delta_ms' in packet_info:
-                packet_data[packet_type]['inter_arrival_times'].append(delta_ms)
-
+        packet_type, packet_info = classify_packet(packet, packet_number)
+        calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps)
+        initialize_packet_data_structure(packet_data, packet_type)
+        update_packet_data_structure(packet_data, packet_type, packet_info)
+    
     return packet_data
 
 
@@ -127,7 +110,7 @@ def create_connections_dataframe(packet_data):
     for ptype, data in packet_data.items():
         for info in data['info']:
             # Skip packets without IP information
-            if info['src_ip'] is None or info['dst_ip'] is None:
+            if 'src_ip' not in info or 'dst_ip' not in info or info['src_ip'] is None or info['dst_ip'] is None:
                 continue
 
             src_dst_pair = (info['src_ip'], info['dst_ip'])
