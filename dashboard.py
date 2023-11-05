@@ -320,8 +320,8 @@ if uploaded_file is not None:
         histogram_fig = plot_inter_arrival_times_histogram(packet_data)
         if histogram_fig is not None:
             st.plotly_chart(histogram_fig)
-        display_summary_statistics(packet_data, 'audio')
-        st.markdown('---')
+            display_summary_statistics(packet_data, 'audio')
+            st.markdown('---')
 
         # Inter-arrival times
         other_fig = plot_inter_arrival_times_box(packet_data)
