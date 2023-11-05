@@ -19,17 +19,25 @@ class IGMPProcessor:
     def process_igmp_packet(self, packet_info, current_time):
         src_ip = packet_info['src_ip']
         igmp_type = packet_info['igmp_type']
-        group_address = packet_info['igmp_group_address']
+        igmp_maddr = packet_info['igmp_maddr']  # Change to 'igmp_maddr'
+
+        # Debug print
+        print(f"Processing IGMP packet from {src_ip} of type {igmp_type} for group {igmp_maddr}")
+
         if igmp_type == 'Membership Query':
+            # Handle General Query (to '0.0.0.0') and Group-Specific Query separately
             self.possible_queriers.add(src_ip)
             last_query_time = self.last_igmp_query_time.get(src_ip, 0)
-            # Check if this is the earliest querier or if it's a new election
             if (not self.elected_querier or src_ip < self.elected_querier) and current_time - last_query_time > self.election_timeout:
                 self.elected_querier = src_ip
             self.last_igmp_query_time[src_ip] = current_time
+
         elif igmp_type in ('Membership Report', 'Leave Group'):
-            path_set = self.allowed_paths if igmp_type == 'Membership Report' else self.denied_paths
-            path_set[group_address].add(src_ip)
+            # Only process these if a valid group address is associated with the report/leave
+            if igmp_maddr and igmp_maddr != '0.0.0.0':
+                path_set = self.allowed_paths if igmp_type == 'Membership Report' else self.denied_paths
+                path_set[igmp_maddr].add(src_ip)
+
 
     def get_igmp_info(self):
         return {
@@ -89,16 +97,15 @@ def classify_packet(packet, packet_number, igmp_info=None):
         })
 
     # Classification logic for IGMP
-    if hasattr(packet, 'igmp'):
+    if 'igmp' in packet:
         packet_type = 'IGMP'
         igmp_type = packet.igmp.type
-        igmp_group_address = None
-        if hasattr(packet.igmp, 'group_address'):
-            igmp_group_address = packet.igmp.group_address
+        igmp_maddr = packet.igmp.maddr
         packet_info.update({
             'igmp_type': igmp_type,
-            'igmp_group_address': igmp_group_address,
+            'igmp_maddr': igmp_maddr,
         })
+
 
     # Add packet_type to packet_info
     packet_info['packet_type'] = packet_type
@@ -422,6 +429,11 @@ def visualize_igmp_info(igmp_info):
     # Return the figure
     return fig
 
+def print_first_two_igmp_packets(capture):
+    igmp_packets = [pkt for pkt in capture if 'igmp' in pkt]
+    for packet in igmp_packets[:2]:  # Just take the first two
+        print(packet.igmp._all_fields)
+
 # Streamlit interface
 st.set_page_config(layout="wide")
 st.title("Packet Capture Analysis Dashboard")
@@ -438,6 +450,7 @@ if uploaded_file is not None:
             f.write(uploaded_file.getvalue())
         
         capture = load_capture(temp_file_path)
+        print_first_two_igmp_packets(capture)
 
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
