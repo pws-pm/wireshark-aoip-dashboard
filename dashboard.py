@@ -6,12 +6,45 @@ import numpy as np
 import os
 from collections import defaultdict
 
+class IGMPProcessor:
+    def __init__(self, election_timeout=255):  # Default value can be set here, 255 is a bit more than twice the standard Query Interval
+        self.election_timeout = election_timeout
+        self.possible_queriers = set()
+        self.elected_querier = None
+        self.allowed_paths = defaultdict(set)
+        self.denied_paths = defaultdict(set)
+        self.last_igmp_query_time = defaultdict(float)
+
+    def process_igmp_packet(self, packet_info, current_time):
+        src_ip = packet_info['src_ip']
+        igmp_type = packet_info['igmp_type']
+        group_address = packet_info['igmp_group_address']
+        if igmp_type == 'Membership Query':
+            self.possible_queriers.add(src_ip)
+            last_query_time = self.last_igmp_query_time.get(src_ip, 0)
+            # Check if this is the earliest querier or if it's a new election
+            if (not self.elected_querier or src_ip < self.elected_querier) and current_time - last_query_time > self.election_timeout:
+                self.elected_querier = src_ip
+            self.last_igmp_query_time[src_ip] = current_time
+        elif igmp_type in ('Membership Report', 'Leave Group'):
+            path_set = self.allowed_paths if igmp_type == 'Membership Report' else self.denied_paths
+            path_set[group_address].add(src_ip)
+
+    def get_igmp_info(self):
+        return {
+            'possible_queriers': self.possible_queriers,
+            'elected_querier': self.elected_querier,
+            'allowed_paths': self.allowed_paths,
+            'denied_paths': self.denied_paths,
+        }
+
+
 # Function to load the pcap file using PyShark
 def load_capture(file_path):
     # We use only_summaries=False to get detailed packet info
     return pyshark.FileCapture(file_path, only_summaries=False)
 
-def classify_packet(packet, packet_number):
+def classify_packet(packet, packet_number, igmp_info=None):
     # Dictionary of PTP message types
     ptp_message_types = {
         '0x00': 'PTP_Sync',
@@ -54,6 +87,16 @@ def classify_packet(packet, packet_number):
             'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'),
         })
 
+    # Classification logic for IGMP
+    if hasattr(packet, 'igmp'):
+        packet_type = 'IGMP'
+        igmp_type = packet.igmp.type
+        igmp_group_address = packet.igmp.group_address
+        packet_info.update({
+            'igmp_type': igmp_type,
+            'igmp_group_address': igmp_group_address,
+        })
+
     # Add packet_type to packet_info
     packet_info['packet_type'] = packet_type
 
@@ -87,17 +130,26 @@ def update_packet_data_structure(packet_data, packet_type, packet_info):
         packet_data[packet_type]['inter_arrival_times'].append(packet_info['delta_ms'])
 
 
-# The refactored process_packets function
 def process_packets(capture):
-    packet_data = {}
+    packet_data = defaultdict(lambda: defaultdict(list))
     last_timestamps = {}
+    igmp_processor = IGMPProcessor(election_timeout=255)
 
     for packet_number, packet in enumerate(capture, start=1):
         packet_type, packet_info = classify_packet(packet, packet_number)
         calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps)
         update_packet_data_structure(packet_data, packet_type, packet_info)
-    
+
+        # Process IGMP separately
+        if packet_type == 'IGMP':
+            igmp_processor.process_igmp_packet(packet_info, float(packet.sniff_timestamp))
+
+    # Merge IGMP info into packet_data
+    packet_data['IGMP']['info'] = igmp_processor.get_igmp_info()
+
     return packet_data
+
+
 
 
 
@@ -191,6 +243,11 @@ def create_connections_dataframe(packet_data, capture):
 
     # Aggregate packet data by source-destination pair and protocol
     for ptype, data in packet_data.items():
+        
+        # Skip IGMP data for this aggregation as it has a different structure
+        if ptype == 'IGMP':
+            continue
+
         for info in data['info']:
             if info.get('src_ip') and info.get('dst_ip'):
                 src_dst_pair = (info['src_ip'], info['dst_ip'])
