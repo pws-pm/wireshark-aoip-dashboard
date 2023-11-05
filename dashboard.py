@@ -2,6 +2,7 @@ import streamlit as st
 import pyshark
 import pandas as pd
 import plotly.graph_objects as go
+import networkx as nx
 import numpy as np
 import os
 from collections import defaultdict
@@ -91,7 +92,9 @@ def classify_packet(packet, packet_number, igmp_info=None):
     if hasattr(packet, 'igmp'):
         packet_type = 'IGMP'
         igmp_type = packet.igmp.type
-        igmp_group_address = packet.igmp.group_address
+        igmp_group_address = None
+        if hasattr(packet.igmp, 'group_address'):
+            igmp_group_address = packet.igmp.group_address
         packet_info.update({
             'igmp_type': igmp_type,
             'igmp_group_address': igmp_group_address,
@@ -243,7 +246,7 @@ def create_connections_dataframe(packet_data, capture):
 
     # Aggregate packet data by source-destination pair and protocol
     for ptype, data in packet_data.items():
-        
+
         # Skip IGMP data for this aggregation as it has a different structure
         if ptype == 'IGMP':
             continue
@@ -346,6 +349,79 @@ def plot_inter_arrival_times_histogram(packet_data):
 
     return fig
 
+def visualize_igmp_info(igmp_info):
+    # Create a directed graph
+    G = nx.DiGraph()
+
+    # Add nodes and edges for allowed paths
+    for group, members in igmp_info['allowed_paths'].items():
+        G.add_node(group, role='group', color='green')
+        for member in members:
+            G.add_node(member, role='member', color='blue')
+            G.add_edge(member, group, color='green')
+
+    # Add nodes and edges for denied paths
+    for group, members in igmp_info['denied_paths'].items():
+        G.add_node(group, role='group', color='red')
+        for member in members:
+            G.add_node(member, role='denied_member', color='orange')
+            G.add_edge(member, group, color='red')
+
+    # Add nodes for possible queriers
+    for pq in igmp_info['possible_queriers']:
+        if pq not in G:
+            G.add_node(pq, role='possible_querier', color='purple')
+
+    # Highlight the elected querier
+    if igmp_info['elected_querier']:
+        G.add_node(igmp_info['elected_querier'], role='elected_querier', color='gold')
+
+    # Extract positions in a circular layout
+    pos = nx.circular_layout(G)
+
+    # Extract node and edge information for plotting
+    edge_x = []
+    edge_y = []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    node_x = []
+    node_y = []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+
+    # Create the Plotly figure
+    fig = go.Figure()
+
+    # Add edges as lines
+    fig.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color='#888'), hoverinfo='none', mode='lines'))
+
+    # Add nodes as scatter points
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers',
+        hoverinfo='text',
+        text=[f"{node}<br>{G.nodes[node]['role']}" for node in G.nodes()],
+        marker=dict(showscale=False, color=[G.nodes[node]['color'] for node in G.nodes()], size=10, line_width=2)
+    ))
+
+    # Update the layout
+    fig.update_layout(
+        showlegend=False,
+        hovermode='closest',
+        margin=dict(b=0, l=0, r=0, t=0),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+    )
+
+    # Return the figure
+    return fig
+
 # Streamlit interface
 st.set_page_config(layout="wide")
 st.title("Packet Capture Analysis Dashboard")
@@ -387,6 +463,14 @@ if uploaded_file is not None:
         # PTP packets stats
         if 'PTP_Sync' in packet_data:
             display_summary_statistics(packet_data, 'PTP_Sync')
+
+        # IGMP Visualization
+        if 'IGMP' in packet_data:
+            igmp_info = packet_data['IGMP']['info']
+            igmp_visualization_figure = visualize_igmp_info(igmp_info)
+            if igmp_visualization_figure is not None:
+                st.header("IGMP Traffic Map")
+                st.plotly_chart(igmp_visualization_figure)
 
         # Delete the temporary file now that we're done with it
         os.remove(temp_file_path)
