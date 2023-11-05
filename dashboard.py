@@ -221,9 +221,9 @@ def create_connections_dataframe(packet_data, capture):
         'Destination IP': key[1],
         'Protocol': key[2],
         'Packet Count': value['Packet Count'],
-        'Percentage': (value['Packet Count'] / sum([v['Packet Count'] for v in aggregated_data.values() if v])) * 100,
-        'Average Bandwidth (Mbps)': value['Average Bandwidth (Mbps)'],
-        'Maximum Bandwidth (Mbps)': value['Maximum Bandwidth (Mbps)']
+        'Traffic % per source': (value['Packet Count'] / sum([v['Packet Count'] for v in aggregated_data.values() if v])) * 100,
+        'Avg Mbps': value['Average Bandwidth (Mbps)'],
+        'Max Mbps': value['Maximum Bandwidth (Mbps)']
     } for key, value in aggregated_data.items()]
 
     # Convert the list of dictionaries to a DataFrame in one go
@@ -290,13 +290,15 @@ def plot_inter_arrival_times_histogram(packet_data):
     return fig
 
 # Streamlit interface
+st.set_page_config(layout="wide")
 st.title("Packet Capture Analysis Dashboard")
+st.write("\n")
 
 # File uploader
 uploaded_file = st.sidebar.file_uploader("Choose a pcap file", type=["pcap", "pcapng"])
 
 if uploaded_file is not None:
-    with st.spinner("Processing..."):
+    with st.spinner("Processing, this may take a while if the file is large..."):
         # Save the uploaded file to a temporary file
         temp_file_path = "temp.pcapng"
         with open(temp_file_path, "wb") as f:
@@ -307,23 +309,25 @@ if uploaded_file is not None:
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
 
-        # Add this to create and display the connections DataFrame
+        # Connections DataFrame
         connections_df = create_connections_dataframe(packet_data, capture)
+        st.header("Connections Overview")
+        st.markdown("Protocols used by each source IP, bandwidth, and percentage of traffic for each protocol per source IP.")
         st.dataframe(connections_df)
+        st.write("\n") #whitespace
 
-        # Display the histogram for audio packet inter-arrival times
+        # Audio packets histogram
         histogram_fig = plot_inter_arrival_times_histogram(packet_data)
         if histogram_fig is not None:
             st.plotly_chart(histogram_fig)
-
-        # Display the summary statistics for audio packets
         display_summary_statistics(packet_data, 'audio')
+        st.write("\n")
 
-        # Plotting
+        # Inter-arrival times
         other_fig = plot_inter_arrival_times_box(packet_data)
         st.plotly_chart(other_fig)
 
-        # Check if PTP packets are in the data and display their statistics
+        # PTP packets stats
         if 'PTP_Sync' in packet_data:
             display_summary_statistics(packet_data, 'PTP_Sync')
 
