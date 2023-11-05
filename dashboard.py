@@ -145,62 +145,94 @@ def display_summary_statistics(packet_data, packet_type):
         st.write(f"{packet_type.capitalize()} Packet Inter-arrival Times Summary:")
         st.dataframe(summary_df)
 
-def calculate_bandwidth(capture):
-    # Dictionary to store bytes per source-destination pair
-    bytes_per_connection = defaultdict(int)
+def calculate_bandwidth(capture, interval_duration=1):
+    # Extract packet lengths and timestamps, filtering out non-IP packets
+    packet_lengths = np.array([int(packet.length) for packet in capture if hasattr(packet, 'ip')])
+    packet_timestamps = np.array([float(packet.sniff_timestamp) for packet in capture if hasattr(packet, 'ip')])
 
-    for packet in capture:
-        if 'IP' in packet:
-            src_dst_pair = (packet.ip.src, packet.ip.dst)
-            frame_len = int(packet.length)
-            bytes_per_connection[src_dst_pair] += frame_len
+    # Find the start and end times
+    start_time = np.min(packet_timestamps)
+    end_time = np.max(packet_timestamps)
+    duration = end_time - start_time
+    
+    # Calculate bytes per source-destination pair for IP packets only
+    src_dst_pairs = [(packet.ip.src, packet.ip.dst) for packet in capture if hasattr(packet, 'ip')]
+    unique_pairs, indices = np.unique(src_dst_pairs, return_inverse=True, axis=0)
+    total_bytes = np.bincount(indices, weights=packet_lengths)
 
-    # Convert bytes to Mbps (1 byte = 8 bits, 1 Mbps = 1e6 bits per second)
-    bandwidth_per_connection = {pair: (bytes * 8) / 1e6 for pair, bytes in bytes_per_connection.items()}
-    return bandwidth_per_connection
+    # Calculate average bandwidth (Mbps)
+    avg_bandwidth = (total_bytes * 8) / (duration * 1e6)
+
+    # Calculate maximum bandwidth (Mbps) within smaller intervals
+    num_intervals = int(np.ceil(duration / interval_duration))
+    max_bandwidth = np.zeros(len(unique_pairs))
+
+    for i in range(num_intervals):
+        interval_mask = (packet_timestamps >= (start_time + i * interval_duration)) & \
+                        (packet_timestamps < (start_time + (i + 1) * interval_duration))
+        interval_indices = indices[interval_mask]
+        interval_lengths = packet_lengths[interval_mask]
+        interval_bytes = np.bincount(interval_indices, weights=interval_lengths, minlength=len(unique_pairs))
+        interval_bandwidth = (interval_bytes * 8) / (interval_duration * 1e6)
+        max_bandwidth = np.maximum(max_bandwidth, interval_bandwidth)
+
+    return unique_pairs, avg_bandwidth, max_bandwidth
+
 
 def create_connections_dataframe(packet_data, capture):
-    connection_info = defaultdict(lambda: {'total_packets': 0, 'protocols': defaultdict(int), 'total_bytes': 0})
-    # Add a call to calculate_bandwidth
-    bandwidth_per_connection = calculate_bandwidth(capture)
+    # Calculate bandwidth
+    unique_pairs, avg_bandwidth, max_bandwidth = calculate_bandwidth(capture)
+    
+    # Convert unique_pairs from a NumPy array to a list of tuples for easy lookup
+    unique_pairs_list = [tuple(pair) for pair in unique_pairs]
+    
+    # Dictionary to hold the aggregated data before creating DataFrame
+    aggregated_data = {}
 
-    # List to store rows for DataFrame creation
-    rows = []
-
+    # Aggregate packet data by source-destination pair and protocol
     for ptype, data in packet_data.items():
         for info in data['info']:
-            # Ensure 'src_ip' and 'dst_ip' are present and not None
             if info.get('src_ip') and info.get('dst_ip'):
                 src_dst_pair = (info['src_ip'], info['dst_ip'])
-                connection_info[src_dst_pair]['total_packets'] += 1
+                if src_dst_pair in unique_pairs_list:
+                    pair_index = unique_pairs_list.index(src_dst_pair)
+                    avg_bw = avg_bandwidth[pair_index]
+                    max_bw = max_bandwidth[pair_index]
+                else:
+                    avg_bw = max_bw = 0  # No bandwidth if pair not found
                 
-                # Classify the protocol based on the destination IP
                 protocol = 'Multicast Audio' if info['dst_ip'].startswith('239.') else ptype
-                connection_info[src_dst_pair]['protocols'][protocol] += 1
+                key = (src_dst_pair[0], src_dst_pair[1], protocol)
+
+                if key not in aggregated_data:
+                    aggregated_data[key] = {
+                        'Packet Count': 0,
+                        'Total Bytes': 0,
+                        'Average Bandwidth (Mbps)': avg_bw,
+                        'Maximum Bandwidth (Mbps)': max_bw
+                    }
+                
+                aggregated_data[key]['Packet Count'] += 1
+                aggregated_data[key]['Total Bytes'] += info.get('length', 0)
 
     # Prepare the data for DataFrame creation
-    for (src_ip, dst_ip), info in connection_info.items():
-        total_packets = info['total_packets']
-        for protocol, count in info['protocols'].items():
-            percentage = (count / total_packets) * 100
-            # Retrieve the bandwidth using the src_dst_pair
-            bandwidth = bandwidth_per_connection.get((src_ip, dst_ip), 0)
-            rows.append({
-                'Source IP': src_ip,
-                'Destination IP': dst_ip,
-                'Protocol': protocol,
-                'Packet Count': count,
-                'Percentage': percentage,
-                'Bandwidth (Mbps)': bandwidth  # Add the bandwidth data here
-            })
+    rows = [{
+        'Source IP': key[0],
+        'Destination IP': key[1],
+        'Protocol': key[2],
+        'Packet Count': value['Packet Count'],
+        'Percentage': (value['Packet Count'] / sum([v['Packet Count'] for v in aggregated_data.values() if v])) * 100,
+        'Average Bandwidth (Mbps)': value['Average Bandwidth (Mbps)'],
+        'Maximum Bandwidth (Mbps)': value['Maximum Bandwidth (Mbps)']
+    } for key, value in aggregated_data.items()]
 
     # Convert the list of dictionaries to a DataFrame in one go
     df = pd.DataFrame(rows)
-
-    # Sort the DataFrame
-    df.sort_values(by='Percentage', ascending=False, inplace=True)
-
+    df.sort_values(by=['Source IP', 'Destination IP', 'Protocol'], inplace=True)
+    
     return df
+
+
 
 def plot_inter_arrival_times_histogram(packet_data):
     if 'audio' not in packet_data:
