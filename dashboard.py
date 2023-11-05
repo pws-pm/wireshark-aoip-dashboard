@@ -61,10 +61,6 @@ def classify_packet(packet, packet_number):
 
 
 
-
-
-
-
 def calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps):
     # Calculates and updates the inter-arrival time for a packet
     current_timestamp = float(packet.sniff_timestamp)
