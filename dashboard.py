@@ -19,24 +19,28 @@ class IGMPProcessor:
     def process_igmp_packet(self, packet_info, current_time):
         src_ip = packet_info['src_ip']
         igmp_type = packet_info['igmp_type']
-        igmp_maddr = packet_info['igmp_maddr']  # Change to 'igmp_maddr'
+        igmp_maddr = packet_info['igmp_maddr']
+        igmp_version = packet_info.get('igmp_version', '2')  # Default to IGMPv2 if not provided
 
-        # Debug print
-        print(f"Processing IGMP packet from {src_ip} of type {igmp_type} for group {igmp_maddr}")
-
+        # Check for Membership Query
         if igmp_type == 'Membership Query':
-            # Handle General Query (to '0.0.0.0') and Group-Specific Query separately
             self.possible_queriers.add(src_ip)
             last_query_time = self.last_igmp_query_time.get(src_ip, 0)
             if (not self.elected_querier or src_ip < self.elected_querier) and current_time - last_query_time > self.election_timeout:
                 self.elected_querier = src_ip
             self.last_igmp_query_time[src_ip] = current_time
 
+        # Check for Membership Report and Leave Group
         elif igmp_type in ('Membership Report', 'Leave Group'):
-            # Only process these if a valid group address is associated with the report/leave
+            # Only process these if a valid multicast address is associated with the report/leave
             if igmp_maddr and igmp_maddr != '0.0.0.0':
                 path_set = self.allowed_paths if igmp_type == 'Membership Report' else self.denied_paths
                 path_set[igmp_maddr].add(src_ip)
+                # For IGMPv1, the source IP is also the group address
+                if igmp_version == '1' and igmp_type == 'Membership Report':
+                    path_set[src_ip].add(src_ip)
+
+
 
 
     def get_igmp_info(self):
@@ -99,9 +103,32 @@ def classify_packet(packet, packet_number, igmp_info=None):
     # Classification logic for IGMP
     if 'igmp' in packet:
         packet_type = 'IGMP'
-        igmp_type = packet.igmp.type
+        igmp_version = packet.igmp.version
+        igmp_type_code = packet.igmp.type
         igmp_maddr = packet.igmp.maddr
+
+        # Map the hex type codes to strings for IGMPv2 and IGMPv3
+        igmp_type_map_v2_v3 = {
+            '0x11': 'Membership Query',
+            '0x16': 'Membership Report',
+            '0x17': 'Leave Group',
+            # Add any additional or custom IGMP types here for v2 and v3
+        }
+
+        # IGMPv1 specific mapping
+        igmp_type_map_v1 = {
+            '0x12': 'Membership Report',
+            # Add any additional or custom IGMP types here for v1
+        }
+
+        # Determine the IGMP type based on the version
+        if igmp_version == '1':
+            igmp_type = igmp_type_map_v1.get(igmp_type_code, f"Unknown IGMPv1 Type ({igmp_type_code})")
+        else:
+            igmp_type = igmp_type_map_v2_v3.get(igmp_type_code, f"Unknown IGMP Type ({igmp_type_code})")
+
         packet_info.update({
+            'igmp_version': igmp_version,
             'igmp_type': igmp_type,
             'igmp_maddr': igmp_maddr,
         })
@@ -360,6 +387,9 @@ def visualize_igmp_info(igmp_info):
     # Create a directed graph
     G = nx.DiGraph()
 
+    # Debug: Print IGMP info
+    print("IGMP Info:", igmp_info)
+
     # Add nodes and edges for allowed paths
     for group, members in igmp_info['allowed_paths'].items():
         G.add_node(group, role='group', color='green')
@@ -373,6 +403,10 @@ def visualize_igmp_info(igmp_info):
         for member in members:
             G.add_node(member, role='denied_member', color='orange')
             G.add_edge(member, group, color='red')
+
+    # Debug: Print nodes and edges added
+    print("Nodes in graph:", G.nodes(data=True))
+    print("Edges in graph:", G.edges(data=True))
 
     # Add nodes for possible queriers
     for pq in igmp_info['possible_queriers']:
@@ -402,6 +436,9 @@ def visualize_igmp_info(igmp_info):
         node_x.append(x)
         node_y.append(y)
 
+    # Debug: Print positions
+    print("Node positions:", pos)
+
     # Create the Plotly figure
     fig = go.Figure()
 
@@ -429,6 +466,7 @@ def visualize_igmp_info(igmp_info):
     # Return the figure
     return fig
 
+# Debug
 def print_first_two_igmp_packets(capture):
     igmp_packets = [pkt for pkt in capture if 'igmp' in pkt]
     for packet in igmp_packets[:2]:  # Just take the first two
@@ -450,7 +488,7 @@ if uploaded_file is not None:
             f.write(uploaded_file.getvalue())
         
         capture = load_capture(temp_file_path)
-        print_first_two_igmp_packets(capture)
+        #print_first_two_igmp_packets(capture) # Debug
 
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
