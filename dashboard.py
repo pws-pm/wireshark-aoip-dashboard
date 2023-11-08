@@ -2,6 +2,7 @@ import streamlit as st
 import pyshark
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import networkx as nx
 import numpy as np
 import os
@@ -78,7 +79,13 @@ def classify_packet(packet, packet_number, igmp_info=None):
     packet_info = {'packet_number': packet_number}
     
     if hasattr(packet, 'ip'):
-        packet_type = 'audio' if packet.ip.dst.startswith('239.') else packet.highest_layer
+        if hasattr(packet, 'ip'):
+            dst_port = packet[packet.transport_layer].dstport if packet.transport_layer and hasattr(packet, packet.transport_layer) else None
+            if packet.ip.dst.startswith('239.') and dst_port:  # Check if it's a multicast packet, typically used for audio/video streaming and has a transport layer
+                packet_type = 'audio_' + packet.ip.dst + '_' + dst_port
+            else:
+                packet_type = packet.highest_layer  # Non-audio packets are classified by the highest layer protocol
+
         packet_info.update({
             'src_ip': packet.ip.src,
             'dst_ip': packet.ip.dst,
@@ -187,15 +194,13 @@ def process_packets(capture):
     return packet_data
 
 
-
-
-
 # Function to create a Plotly box plot for inter-arrival times per packet type with log scale for non audio
 def plot_inter_arrival_times_box(packet_data):
     # Create box plot for other packet types
     other_fig = go.Figure()
     for ptype, data in packet_data.items():
-        if ptype != 'audio':
+        # Check if the packet type does NOT start with 'audio_'
+        if not ptype.startswith('audio_'):  # Corrected condition to exclude all audio streams
             other_fig.add_trace(go.Box(
                 y=data['inter_arrival_times'],
                 name=ptype,
@@ -211,28 +216,42 @@ def plot_inter_arrival_times_box(packet_data):
 
     return other_fig
 
+
 # Function to calculate and display summary statistics in Streamlit
-def display_summary_statistics(packet_data, packet_type):
-    if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
-        times = packet_data[packet_type]['inter_arrival_times']
-        min_val = np.min(times)
-        max_val = np.max(times)
-        median_val = np.median(times)
-        mean_val = np.mean(times)
-        std_dev = np.std(times)
+def display_summary_statistics(packet_data, packet_type=None):
+    # If a specific packet type is provided, display statistics only for that type
+    if packet_type:
+        if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
+            times = packet_data[packet_type]['inter_arrival_times']
+            display_stats_for_packet_type(times, packet_type)
+    # If no specific packet type is provided, display statistics for all audio streams
+    else:
+        for packet_type, data in packet_data.items():
+            if packet_type.startswith('audio_') and data['inter_arrival_times']:
+                times = data['inter_arrival_times']
+                display_stats_for_packet_type(times, packet_type)
 
-        # Create a DataFrame for the summary statistics
-        summary_df = pd.DataFrame({
-            'Minimum (ms)': [f"{min_val:.3f}"],
-            'Maximum (ms)': [f"{max_val:.3f}"],
-            'Median (ms)': [f"{median_val:.3f}"],
-            'Mean (ms)': [f"{mean_val:.3f}"],
-            'Std Deviation (ms)': [f"{std_dev:.3f}"]
-        })
+def display_stats_for_packet_type(times, packet_type):
+    # Calculate statistics
+    min_val = np.min(times)
+    max_val = np.max(times)
+    median_val = np.median(times)
+    mean_val = np.mean(times)
+    std_dev = np.std(times)
 
-        # Display the DataFrame
-        st.write(f"{packet_type.capitalize()} Packet Inter-arrival Times Summary:")
-        st.dataframe(summary_df)
+    # Create a DataFrame for the summary statistics
+    summary_df = pd.DataFrame({
+        'Minimum (ms)': [f"{min_val:.3f}"],
+        'Maximum (ms)': [f"{max_val:.3f}"],
+        'Median (ms)': [f"{median_val:.3f}"],
+        'Mean (ms)': [f"{mean_val:.3f}"],
+        'Std Deviation (ms)': [f"{std_dev:.3f}"]
+    })
+
+    # Display the DataFrame
+    st.write(f"{packet_type.capitalize()} Packet Inter-arrival Times Summary:")
+    st.dataframe(summary_df)
+
 
 def calculate_bandwidth(capture, interval_duration=1):
     # Extract packet lengths and timestamps, filtering out non-IP packets
@@ -328,57 +347,53 @@ def create_connections_dataframe(packet_data, capture):
 
 
 
-def plot_inter_arrival_times_histogram(packet_data):
-    if 'audio' not in packet_data:
+def plot_audio_streams_histogram(packet_data):
+    # Prepare subplots; one for each audio stream
+    audio_streams = [ptype for ptype in packet_data if ptype.startswith('audio_')]
+    num_streams = len(audio_streams)
+    if num_streams == 0:
         return None
 
-    audio_times = packet_data['audio']['inter_arrival_times']
-    if not audio_times:
-        return None
+    fig = make_subplots(rows=num_streams, cols=1, subplot_titles=audio_streams)
+    
+    for i, stream in enumerate(audio_streams, start=1):
+        stream_data = packet_data[stream]['inter_arrival_times']
+        
+        # Since we are using a log scale, filter out any times that are 0
+        stream_data = [time for time in stream_data if time > 0]
 
-    # Since we are using a log scale, filter out any times that are 0
-    audio_times = [time for time in audio_times if time > 0]
+        # Define bins for histogram
+        num_bins = 50
+        min_time = min(stream_data)
+        max_time = max(stream_data)
+        log_min = np.log10(min_time)
+        log_max = np.log10(max_time)
+        log_bins = np.logspace(log_min, log_max, num=num_bins)
 
-    # Calculate the number of bins to use
-    num_bins = 50
+        # Create the histogram data
+        histogram_data = np.histogram(stream_data, bins=log_bins)
+        bin_counts = histogram_data[0]
+        bin_edges = histogram_data[1]
 
-    # Define bins for histogram with equal width in log space
-    min_time = min(audio_times)
-    max_time = max(audio_times)
-    log_min = np.log10(min_time)
-    log_max = np.log10(max_time)
-    log_bins = np.logspace(log_min, log_max, num=num_bins)
+        # Add histogram to the subplot
+        fig.add_trace(
+            go.Bar(
+                x=(bin_edges[:-1] + bin_edges[1:]) / 2,  # Use the middle value of the bins for x-axis
+                y=bin_counts,
+                name=stream
+            ),
+            row=i,
+            col=1
+        )
 
-    # Create the histogram data
-    histogram_data = np.histogram(audio_times, bins=log_bins)
-    bin_counts = histogram_data[0]
-    bin_edges = histogram_data[1]
-
-    # Use a scatter plot to simulate bars with 'lines+markers' and fill below the line
-    fig = go.Figure(data=go.Scatter(
-        x=bin_edges.repeat(2)[1:-1],
-        y=np.repeat(bin_counts, 2),
-        mode='lines',
-        line=dict(
-            color='rgba(0, 100, 80, .8)',  # Single color for all 'bars'
-            shape='hv'  # Create a horizontal line followed by a vertical line
-        ),
-        fill='tozeroy'  # Fill the area under the line
-    ))
-
-    # Update the layout to use log scales
+    # Update the layout for the figure
     fig.update_layout(
-        title='2D Histogram of Audio Packet Inter-arrival Times',
-        xaxis=dict(
-            title='Inter-arrival Time (ms)',
-            type='log',
-            tickformat='.3f'
-        ),
-        yaxis=dict(
-            title='Quantity',
-            type='log'
-        ),
-        template='plotly_white'
+        title='Histogram of Audio Packet Inter-arrival Times per Stream',
+        xaxis=dict(title='Inter-arrival Time (ms)', type='log', tickformat='.3f'),
+        yaxis=dict(title='Quantity', type='log'),
+        template='plotly_white',
+        height=300 * num_streams,  # Adjust height based on the number of streams
+        showlegend=False
     )
 
     return fig
@@ -501,10 +516,10 @@ if uploaded_file is not None:
         st.markdown('---')
 
         # Audio packets histogram
-        histogram_fig = plot_inter_arrival_times_histogram(packet_data)
-        if histogram_fig is not None:
-            st.plotly_chart(histogram_fig)
-            display_summary_statistics(packet_data, 'audio')
+        audio_histogram_fig = plot_audio_streams_histogram(packet_data)
+        if audio_histogram_fig is not None:
+            st.plotly_chart(audio_histogram_fig)
+            display_summary_statistics(packet_data)
             st.markdown('---')
 
         # Inter-arrival times
