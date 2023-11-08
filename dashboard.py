@@ -217,21 +217,31 @@ def plot_inter_arrival_times_box(packet_data):
     return other_fig
 
 
-# Function to calculate and display summary statistics in Streamlit
 def display_summary_statistics(packet_data, packet_type=None):
+    # List to hold all statistics data
+    all_stats = []
+
     # If a specific packet type is provided, display statistics only for that type
     if packet_type:
         if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
             times = packet_data[packet_type]['inter_arrival_times']
-            display_stats_for_packet_type(times, packet_type)
+            stats = calculate_stats(times, packet_type)
+            all_stats.append(stats)
     # If no specific packet type is provided, display statistics for all audio streams
     else:
         for packet_type, data in packet_data.items():
             if packet_type.startswith('audio_') and data['inter_arrival_times']:
                 times = data['inter_arrival_times']
-                display_stats_for_packet_type(times, packet_type)
+                stats = calculate_stats(times, packet_type)
+                all_stats.append(stats)
+    
+    # Create a DataFrame for all the summary statistics
+    if all_stats:
+        summary_df = pd.DataFrame(all_stats)
+        # Display the DataFrame
+        st.dataframe(summary_df)
 
-def display_stats_for_packet_type(times, packet_type):
+def calculate_stats(times, packet_type):
     # Calculate statistics
     min_val = np.min(times)
     max_val = np.max(times)
@@ -239,18 +249,16 @@ def display_stats_for_packet_type(times, packet_type):
     mean_val = np.mean(times)
     std_dev = np.std(times)
 
-    # Create a DataFrame for the summary statistics
-    summary_df = pd.DataFrame({
-        'Minimum (ms)': [f"{min_val:.3f}"],
-        'Maximum (ms)': [f"{max_val:.3f}"],
-        'Median (ms)': [f"{median_val:.3f}"],
-        'Mean (ms)': [f"{mean_val:.3f}"],
-        'Std Deviation (ms)': [f"{std_dev:.3f}"]
-    })
+    # Return a dictionary with the statistics and the packet type (as flow)
+    return {
+        'Flow': packet_type.replace('audio_', '').replace('_', ':').capitalize(),
+        'Minimum (ms)': f"{min_val:.3f}",
+        'Maximum (ms)': f"{max_val:.3f}",
+        'Median (ms)': f"{median_val:.3f}",
+        'Mean (ms)': f"{mean_val:.3f}",
+        'Std Deviation (ms)': f"{std_dev:.3f}"
+    }
 
-    # Display the DataFrame
-    st.write(f"{packet_type.capitalize()} Packet Inter-arrival Times Summary:")
-    st.dataframe(summary_df)
 
 
 def calculate_bandwidth(capture, interval_duration=1):
@@ -402,9 +410,6 @@ def visualize_igmp_info(igmp_info):
     # Create a directed graph
     G = nx.DiGraph()
 
-    # Debug: Print IGMP info
-    print("IGMP Info:", igmp_info)
-
     # Add nodes and edges for allowed paths
     for group, members in igmp_info['allowed_paths'].items():
         G.add_node(group, role='group', color='green')
@@ -418,10 +423,6 @@ def visualize_igmp_info(igmp_info):
         for member in members:
             G.add_node(member, role='denied_member', color='orange')
             G.add_edge(member, group, color='red')
-
-    # Debug: Print nodes and edges added
-    print("Nodes in graph:", G.nodes(data=True))
-    print("Edges in graph:", G.edges(data=True))
 
     # Add nodes for possible queriers
     for pq in igmp_info['possible_queriers']:
@@ -451,9 +452,6 @@ def visualize_igmp_info(igmp_info):
         node_x.append(x)
         node_y.append(y)
 
-    # Debug: Print positions
-    print("Node positions:", pos)
-
     # Create the Plotly figure
     fig = go.Figure()
 
@@ -481,12 +479,6 @@ def visualize_igmp_info(igmp_info):
     # Return the figure
     return fig
 
-# Debug
-def print_first_two_igmp_packets(capture):
-    igmp_packets = [pkt for pkt in capture if 'igmp' in pkt]
-    for packet in igmp_packets[:2]:  # Just take the first two
-        print(packet.igmp._all_fields)
-
 # Streamlit interface
 st.set_page_config(layout="wide")
 st.title("Packet Capture Analysis Dashboard")
@@ -503,7 +495,6 @@ if uploaded_file is not None:
             f.write(uploaded_file.getvalue())
         
         capture = load_capture(temp_file_path)
-        #print_first_two_igmp_packets(capture) # Debug
 
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
