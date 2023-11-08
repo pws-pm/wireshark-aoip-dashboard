@@ -216,51 +216,6 @@ def plot_inter_arrival_times_box(packet_data):
 
     return other_fig
 
-
-def display_summary_statistics(packet_data, packet_type=None):
-    # List to hold all statistics data
-    all_stats = []
-
-    # If a specific packet type is provided, display statistics only for that type
-    if packet_type:
-        if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
-            times = packet_data[packet_type]['inter_arrival_times']
-            stats = calculate_stats(times, packet_type)
-            all_stats.append(stats)
-    # If no specific packet type is provided, display statistics for all audio streams
-    else:
-        for packet_type, data in packet_data.items():
-            if packet_type.startswith('audio_') and data['inter_arrival_times']:
-                times = data['inter_arrival_times']
-                stats = calculate_stats(times, packet_type)
-                all_stats.append(stats)
-    
-    # Create a DataFrame for all the summary statistics
-    if all_stats:
-        summary_df = pd.DataFrame(all_stats)
-        # Display the DataFrame
-        st.dataframe(summary_df)
-
-def calculate_stats(times, packet_type):
-    # Calculate statistics
-    min_val = np.min(times)
-    max_val = np.max(times)
-    median_val = np.median(times)
-    mean_val = np.mean(times)
-    std_dev = np.std(times)
-
-    # Return a dictionary with the statistics and the packet type (as flow)
-    return {
-        'Flow': packet_type.replace('audio_', '').replace('_', ':').capitalize(),
-        'Minimum (ms)': f"{min_val:.3f}",
-        'Maximum (ms)': f"{max_val:.3f}",
-        'Median (ms)': f"{median_val:.3f}",
-        'Mean (ms)': f"{mean_val:.3f}",
-        'Std Deviation (ms)': f"{std_dev:.3f}"
-    }
-
-
-
 def calculate_bandwidth(capture, interval_duration=1):
     # Extract packet lengths and timestamps, filtering out non-IP packets
     packet_lengths = np.array([int(packet.length) for packet in capture if hasattr(packet, 'ip')])
@@ -354,6 +309,47 @@ def create_connections_dataframe(packet_data, capture):
     return df
 
 
+def calculate_stats(times, packet_type):
+    # Calculate statistics
+    min_val = np.min(times)
+    max_val = np.max(times)
+    median_val = np.median(times)
+    mean_val = np.mean(times)
+    std_dev = np.std(times)
+
+    # Return a dictionary with the statistics and the packet type (as flow)
+    return {
+        'Flow': packet_type.replace('audio_', '').replace('_', ':').capitalize(),
+        'Minimum (ms)': f"{min_val:.3f}",
+        'Maximum (ms)': f"{max_val:.3f}",
+        'Median (ms)': f"{median_val:.3f}",
+        'Mean (ms)': f"{mean_val:.3f}",
+        'Std Deviation (ms)': f"{std_dev:.3f}"
+    }
+
+def display_summary_statistics(packet_data, packet_type=None):
+    # List to hold all statistics data
+    all_stats = []
+
+    # If a specific packet type is provided, display statistics only for that type
+    if packet_type:
+        if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
+            times = packet_data[packet_type]['inter_arrival_times']
+            stats = calculate_stats(times, packet_type)
+            all_stats.append(stats)
+    # If no specific packet type is provided, display statistics for all audio streams
+    else:
+        for packet_type, data in packet_data.items():
+            if packet_type.startswith('audio_') and data['inter_arrival_times']:
+                times = data['inter_arrival_times']
+                stats = calculate_stats(times, packet_type)
+                all_stats.append(stats)
+    
+    # Create a DataFrame for all the summary statistics
+    if all_stats:
+        summary_df = pd.DataFrame(all_stats)
+        # Display the DataFrame
+        st.dataframe(summary_df)
 
 def plot_audio_streams_histogram(packet_data):
     # Prepare subplots; one for each audio stream
@@ -376,18 +372,21 @@ def plot_audio_streams_histogram(packet_data):
         max_time = max(stream_data)
         log_min = np.log10(min_time)
         log_max = np.log10(max_time)
-        log_bins = np.logspace(log_min, log_max, num=num_bins)
+        log_bins = np.logspace(log_min, log_max, num_bins)
+        bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
 
         # Create the histogram data
         histogram_data = np.histogram(stream_data, bins=log_bins)
         bin_counts = histogram_data[0]
-        bin_edges = histogram_data[1]
 
-        # Add histogram to the subplot
+        # Add filled scatter plot to the subplot
         fig.add_trace(
-            go.Bar(
-                x=(bin_edges[:-1] + bin_edges[1:]) / 2,  # Use the middle value of the bins for x-axis
-                y=bin_counts,
+            go.Scatter(
+                x=bin_midpoints.repeat(2),
+                y=np.repeat(bin_counts, 2),
+                mode='lines',
+                line=dict(color='rgba(0, 100, 80, .8)', shape='hv'),
+                fill='tozeroy',
                 name=stream
             ),
             row=i,
@@ -397,14 +396,31 @@ def plot_audio_streams_histogram(packet_data):
     # Update the layout for the figure
     fig.update_layout(
         title='Histogram of Audio Packet Inter-arrival Times per Stream',
-        xaxis=dict(title='Inter-arrival Time (ms)', type='log', tickformat='.3f'),
-        yaxis=dict(title='Quantity', type='log'),
         template='plotly_white',
         height=300 * num_streams,  # Adjust height based on the number of streams
         showlegend=False
     )
 
+    # Update x-axis and y-axis to use log scales and custom tick labels for each subplot
+    for j in range(1, num_streams + 1):
+        fig.update_xaxes(
+            title='Inter-arrival Time (ms)', 
+            type='log',
+            tickvals=bin_midpoints,  # Set custom tick values to the middle of the bins
+            ticktext=[f"{x:.2g}" for x in bin_midpoints],  # Custom tick text with reduced precision
+            row=j, 
+            col=1
+        )
+        fig.update_yaxes(
+            title='Quantity', 
+            type='log', 
+            row=j, 
+            col=1
+        )
+
     return fig
+
+
 
 def visualize_igmp_info(igmp_info):
     # Create a directed graph
