@@ -351,7 +351,47 @@ def display_summary_statistics(packet_data, packet_type=None):
         # Display the DataFrame
         st.dataframe(summary_df)
 
+def packet_ranges(packet_numbers):
+    if not packet_numbers:
+        return []
+
+    # Sort packet numbers and initialize the first range
+    sorted_packets = sorted(packet_numbers)
+    ranges = [[sorted_packets[0], sorted_packets[0]]]
+
+    for packet in sorted_packets[1:]:
+        if packet == ranges[-1][1] + 1:
+            # Extend the current range
+            ranges[-1][1] = packet
+        else:
+            # Start a new range
+            ranges.append([packet, packet])
+
+    # Convert ranges to strings, combining contiguous packets into ranges
+    range_strings = []
+    for packet_range in ranges:
+        if packet_range[0] == packet_range[1]:
+            range_strings.append(str(packet_range[0]))
+        else:
+            range_strings.append(f"{packet_range[0]}-{packet_range[1]}")
+
+    return range_strings
+
+def tooltip_content_for_bin(bin_packets, max_display=5):
+    # Get ranges for contiguous packets
+    packet_display = packet_ranges(bin_packets)
+
+    # If there are too many packet ranges, truncate the list
+    if len(packet_display) > max_display:
+        packet_display = packet_display[:max_display] + ["..."]
+
+    return ", ".join(packet_display)
+
 def plot_audio_streams_histogram(packet_data):
+    # Constants for plotting
+    MAX_PACKETS_DISPLAYED = 5  # Maximum number of packets/ranges to show in the tooltip
+    num_bins = 50  # Number of bins for the histogram
+
     # Prepare subplots; one for each audio stream
     audio_streams = [ptype for ptype in packet_data if ptype.startswith('audio_')]
     num_streams = len(audio_streams)
@@ -359,25 +399,41 @@ def plot_audio_streams_histogram(packet_data):
         return None
 
     fig = make_subplots(rows=num_streams, cols=1, subplot_titles=audio_streams)
-    
+
     for i, stream in enumerate(audio_streams, start=1):
         stream_data = packet_data[stream]['inter_arrival_times']
-        
-        # Since we are using a log scale, filter out any times that are 0
-        stream_data = [time for time in stream_data if time > 0]
+        packet_numbers = [info['packet_number'] for info in packet_data[stream]['info']]
+
+        # Filter out any times that are 0
+        filtered_stream_data = [(time, pkt_num) for time, pkt_num in zip(stream_data, packet_numbers) if time > 0]
+        stream_times, stream_packets = zip(*filtered_stream_data)
 
         # Define bins for histogram
-        num_bins = 50
-        min_time = min(stream_data)
-        max_time = max(stream_data)
+        min_time = min(stream_times)
+        max_time = max(stream_times)
         log_min = np.log10(min_time)
         log_max = np.log10(max_time)
         log_bins = np.logspace(log_min, log_max, num_bins)
         bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
 
         # Create the histogram data
-        histogram_data = np.histogram(stream_data, bins=log_bins)
+        histogram_data = np.histogram(stream_times, bins=log_bins)
         bin_counts = histogram_data[0]
+        bin_edges = histogram_data[1]
+
+        # Calculate packet numbers for each bin
+        bin_packet_numbers = [[] for _ in range(num_bins)]
+        for time, packet_num in filtered_stream_data:
+            bin_index = np.digitize(time, bin_edges) - 1  # -1 as np.digitize returns 1-based indices
+            bin_packet_numbers[bin_index].append(packet_num)
+
+        # Prepare tooltip content
+        customdata = []
+        for bin_index in range(num_bins):
+            bin_packets = bin_packet_numbers[bin_index]
+            tooltip_content = tooltip_content_for_bin(bin_packets, MAX_PACKETS_DISPLAYED)
+            # For each midpoint, we must add the same tooltip content twice since we repeat the midpoints
+            customdata.extend([tooltip_content, tooltip_content])
 
         # Add filled scatter plot to the subplot
         fig.add_trace(
@@ -387,7 +443,9 @@ def plot_audio_streams_histogram(packet_data):
                 mode='lines',
                 line=dict(color='rgba(0, 100, 80, .8)', shape='hv'),
                 fill='tozeroy',
-                name=stream
+                name=stream,
+                customdata=customdata,
+                hovertemplate="<b>Bin Range: %{x:.2f}ms - %{x:.2f}ms</b><br>Packets: %{customdata}<extra></extra>"
             ),
             row=i,
             col=1
@@ -407,7 +465,7 @@ def plot_audio_streams_histogram(packet_data):
             title='Inter-arrival Time (ms)', 
             type='log',
             tickvals=bin_midpoints,  # Set custom tick values to the middle of the bins
-            ticktext=[f"{x:.2g}" for x in bin_midpoints],  # Custom tick text with reduced precision
+            ticktext=[f"{x:.2f}" for x in bin_midpoints],  # Custom tick text with reduced precision
             row=j, 
             col=1
         )
@@ -419,6 +477,9 @@ def plot_audio_streams_histogram(packet_data):
         )
 
     return fig
+
+
+
 
 
 
