@@ -79,18 +79,29 @@ def classify_packet(packet, packet_number, igmp_info=None):
     packet_info = {'packet_number': packet_number}
     
     if hasattr(packet, 'ip'):
-        if hasattr(packet, 'ip'):
-            dst_port = packet[packet.transport_layer].dstport if packet.transport_layer and hasattr(packet, packet.transport_layer) else None
-            if packet.ip.dst.startswith('239.') and dst_port:  # Check if it's a multicast packet, typically used for audio/video streaming and has a transport layer
-                packet_type = 'audio_' + packet.ip.dst + '_' + dst_port
-            else:
-                packet_type = packet.highest_layer  # Non-audio packets are classified by the highest layer protocol
+        dst_port = packet[packet.transport_layer].dstport if packet.transport_layer and hasattr(packet, packet.transport_layer) else None
+
+        # Check for Dante and Multicast Audio classification
+        if hasattr(packet, 'udp') and packet.udp:
+            udp_dst_port = int(packet.udp.dstport)
+            if 14336 <= udp_dst_port <= 14591:
+                packet_type = 'Audio_DanteUnicast|' + packet.ip.dst + '|' + str(udp_dst_port)
+            elif 34336 <= udp_dst_port <= 34600:
+                packet_type = 'Audio_DanteViaUnicast|' + packet.ip.dst + '|' + str(udp_dst_port)
+            elif packet.ip.dst.startswith('239.') and dst_port:
+                packet_type = 'Audio_Multicast|' + packet.ip.dst + '|' + dst_port
+
+        # Non-Dante audio packets classification
+        elif packet.ip.dst.startswith('239.') and dst_port:
+            packet_type = 'Audio_Multicast|' + packet.ip.dst + '|' + dst_port
+        else:
+            packet_type = packet.highest_layer
 
         packet_info.update({
             'src_ip': packet.ip.src,
             'dst_ip': packet.ip.dst,
             'src_port': packet[packet.transport_layer].srcport if packet.transport_layer else None,
-            'dst_port': packet[packet.transport_layer].dstport if packet.transport_layer else None,
+            'dst_port': dst_port
         })
 
     # Check for PTP layer and classify PTP messages
@@ -140,11 +151,11 @@ def classify_packet(packet, packet_number, igmp_info=None):
             'igmp_maddr': igmp_maddr,
         })
 
-
     # Add packet_type to packet_info
     packet_info['packet_type'] = packet_type
 
     return packet_type, packet_info
+
 
 
 
@@ -199,8 +210,8 @@ def plot_inter_arrival_times_box(packet_data):
     # Create box plot for other packet types
     other_fig = go.Figure()
     for ptype, data in packet_data.items():
-        # Check if the packet type does NOT start with 'audio_'
-        if not ptype.startswith('audio_'):  # Corrected condition to exclude all audio streams
+        # Check if the packet type does NOT start with 'Audio_'
+        if not ptype.startswith('Audio_'):  # Corrected condition to exclude all audio streams
             other_fig.add_trace(go.Box(
                 y=data['inter_arrival_times'],
                 name=ptype,
@@ -276,9 +287,10 @@ def create_connections_dataframe(packet_data, capture):
                     max_bw = max_bandwidth[pair_index]
                 else:
                     avg_bw = max_bw = 0  # No bandwidth if pair not found
-                
-                protocol = 'Multicast Audio' if info['dst_ip'].startswith('239.') else ptype
-                key = (src_dst_pair[0], src_dst_pair[1], protocol)
+
+                simplified_protocol = ptype.split('|')[0]  # Keep only the first part before '|'
+                dst_port = info.get('dst_port', 'Unknown')  # Extract destination port
+                key = (src_dst_pair[0], src_dst_pair[1], dst_port, simplified_protocol)
 
                 if key not in aggregated_data:
                     aggregated_data[key] = {
@@ -295,18 +307,22 @@ def create_connections_dataframe(packet_data, capture):
     rows = [{
         'Source IP': key[0],
         'Destination IP': key[1],
-        'Protocol': key[2],
+        'Port': key[2],
+        'Protocol': key[3],
         'Packet Count': value['Packet Count'],
         'Traffic % per source': (value['Packet Count'] / sum([v['Packet Count'] for v in aggregated_data.values() if v])) * 100,
         'Avg Mbps': value['Average Bandwidth (Mbps)'],
         'Max Mbps': value['Maximum Bandwidth (Mbps)']
     } for key, value in aggregated_data.items()]
 
-    # Convert the list of dictionaries to a DataFrame in one go
+    # Convert the list of dictionaries to a DataFrame
     df = pd.DataFrame(rows)
-    df.sort_values(by=['Source IP', 'Destination IP', 'Protocol'], inplace=True)
+    df.sort_values(by=['Source IP', 'Destination IP', 'Port', 'Protocol'], inplace=True)
     
     return df
+
+
+
 
 
 def calculate_stats(times, packet_type):
@@ -319,7 +335,7 @@ def calculate_stats(times, packet_type):
 
     # Return a dictionary with the statistics and the packet type (as flow)
     return {
-        'Flow': packet_type.replace('audio_', '').replace('_', ':').capitalize(),
+        'Flow': packet_type.replace('Audio_', '').replace('_', ':').capitalize(),
         'Minimum (ms)': f"{min_val:.3f}",
         'Maximum (ms)': f"{max_val:.3f}",
         'Median (ms)': f"{median_val:.3f}",
@@ -340,7 +356,7 @@ def display_summary_statistics(packet_data, packet_type=None):
     # If no specific packet type is provided, display statistics for all audio streams
     else:
         for packet_type, data in packet_data.items():
-            if packet_type.startswith('audio_') and data['inter_arrival_times']:
+            if packet_type.startswith('Audio_') and data['inter_arrival_times']:
                 times = data['inter_arrival_times']
                 stats = calculate_stats(times, packet_type)
                 all_stats.append(stats)
@@ -393,7 +409,7 @@ def plot_audio_streams_histogram(packet_data):
     num_bins = 50  # Number of bins for the histogram
 
     # Prepare subplots; one for each audio stream
-    audio_streams = [ptype for ptype in packet_data if ptype.startswith('audio_')]
+    audio_streams = [ptype for ptype in packet_data if ptype.startswith('Audio_')]
     num_streams = len(audio_streams)
     if num_streams == 0:
         return None
