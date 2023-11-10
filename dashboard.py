@@ -262,17 +262,20 @@ def calculate_bandwidth(capture, interval_duration=1):
         # Average bandwidth
         avg_bandwidth[i] = (total_bytes * 8) / (duration * 1e6)
 
-        # Maximum bandwidth
-        num_intervals = int(np.ceil(duration / interval_duration))
-        for j in range(num_intervals):
-            interval_start = start_time + j * interval_duration
-            interval_end = interval_start + interval_duration
-            interval_bytes = sum(length for t, length in zip(timestamps, lengths) 
-                                 if interval_start <= t < interval_end)
-            interval_bandwidth = (interval_bytes * 8) / (interval_duration * 1e6)
-            max_bandwidth[i] = max(max_bandwidth[i], interval_bandwidth)
+        # Maximum bandwidth using a 1-second sliding window
+        sorted_packets = sorted(zip(timestamps, lengths))
+        max_window_bytes = 0
+        window_start = 0
+        for j in range(len(sorted_packets)):
+            while sorted_packets[j][0] - sorted_packets[window_start][0] > 1:
+                window_start += 1
+            window_bytes = sum(packet[1] for packet in sorted_packets[window_start:j+1])
+            max_window_bytes = max(max_window_bytes, window_bytes)
+        
+        max_bandwidth[i] = (max_window_bytes * 8) / 1e6  # Convert to Mbps
 
     return unique_flows, avg_bandwidth, max_bandwidth
+
 
 
 
