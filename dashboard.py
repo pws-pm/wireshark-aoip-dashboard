@@ -85,15 +85,15 @@ def classify_packet(packet, packet_number, igmp_info=None):
         if hasattr(packet, 'udp') and packet.udp:
             udp_dst_port = int(packet.udp.dstport)
             if 14336 <= udp_dst_port <= 14591:
-                packet_type = 'Audio_DanteUnicast|' + packet.ip.dst + '|' + str(udp_dst_port)
+                packet_type = 'Audio_DanteUnicast|' + packet.ip.dst + ':' + str(udp_dst_port)
             elif 34336 <= udp_dst_port <= 34600:
-                packet_type = 'Audio_DanteViaUnicast|' + packet.ip.dst + '|' + str(udp_dst_port)
+                packet_type = 'Audio_DanteViaUnicast|' + packet.ip.dst + ':' + str(udp_dst_port)
             elif packet.ip.dst.startswith('239.') and dst_port:
-                packet_type = 'Audio_Multicast|' + packet.ip.dst + '|' + dst_port
+                packet_type = 'Audio_Multicast|' + packet.ip.dst + ':' + dst_port
 
         # Non-Dante audio packets classification
         elif packet.ip.dst.startswith('239.') and dst_port:
-            packet_type = 'Audio_Multicast|' + packet.ip.dst + '|' + dst_port
+            packet_type = 'Audio_Multicast|' + packet.ip.dst + ':' + dst_port
         else:
             packet_type = packet.highest_layer
 
@@ -228,69 +228,83 @@ def plot_inter_arrival_times_box(packet_data):
     return other_fig
 
 def calculate_bandwidth(capture, interval_duration=1):
-    # Extract packet lengths and timestamps, filtering out non-IP packets
-    packet_lengths = np.array([int(packet.length) for packet in capture if hasattr(packet, 'ip')])
-    packet_timestamps = np.array([float(packet.sniff_timestamp) for packet in capture if hasattr(packet, 'ip')])
+    # Extract packet lengths, timestamps, and flow information
+    packets_info = [(int(packet.length), float(packet.sniff_timestamp), 
+                     packet.ip.src, packet.ip.dst, 
+                     packet[packet.transport_layer].srcport if packet.transport_layer else 'None', 
+                     packet[packet.transport_layer].dstport if packet.transport_layer else 'None') 
+                    for packet in capture if hasattr(packet, 'ip')]
 
-    # Find the start and end times
-    start_time = np.min(packet_timestamps)
-    end_time = np.max(packet_timestamps)
-    duration = end_time - start_time
-    
-    # Calculate bytes per source-destination pair for IP packets only
-    src_dst_pairs = [(packet.ip.src, packet.ip.dst) for packet in capture if hasattr(packet, 'ip')]
-    unique_pairs, indices = np.unique(src_dst_pairs, return_inverse=True, axis=0)
-    total_bytes = np.bincount(indices, weights=packet_lengths)
+    # Organize packets by flow
+    flows = {}
+    for length, timestamp, src_ip, dst_ip, src_port, dst_port in packets_info:
+        flow = (src_ip, dst_ip, src_port, dst_port)
+        if flow not in flows:
+            flows[flow] = {'timestamps': [], 'lengths': []}
+        flows[flow]['timestamps'].append(timestamp)
+        flows[flow]['lengths'].append(length)
 
-    # Calculate average bandwidth (Mbps)
-    avg_bandwidth = (total_bytes * 8) / (duration * 1e6)
+    # Initialize bandwidth results
+    unique_flows = list(flows.keys())
+    avg_bandwidth = np.zeros(len(unique_flows))
+    max_bandwidth = np.zeros(len(unique_flows))
 
-    # Calculate maximum bandwidth (Mbps) within smaller intervals
-    num_intervals = int(np.ceil(duration / interval_duration))
-    max_bandwidth = np.zeros(len(unique_pairs))
+    # Calculate bandwidth for each flow
+    for i, flow in enumerate(unique_flows):
+        timestamps = flows[flow]['timestamps']
+        lengths = flows[flow]['lengths']
 
-    for i in range(num_intervals):
-        interval_mask = (packet_timestamps >= (start_time + i * interval_duration)) & \
-                        (packet_timestamps < (start_time + (i + 1) * interval_duration))
-        interval_indices = indices[interval_mask]
-        interval_lengths = packet_lengths[interval_mask]
-        interval_bytes = np.bincount(interval_indices, weights=interval_lengths, minlength=len(unique_pairs))
-        interval_bandwidth = (interval_bytes * 8) / (interval_duration * 1e6)
-        max_bandwidth = np.maximum(max_bandwidth, interval_bandwidth)
+        start_time = min(timestamps)
+        end_time = max(timestamps)
+        duration = end_time - start_time
+        total_bytes = sum(lengths)
 
-    return unique_pairs, avg_bandwidth, max_bandwidth
+        # Average bandwidth
+        avg_bandwidth[i] = (total_bytes * 8) / (duration * 1e6)
+
+        # Maximum bandwidth
+        num_intervals = int(np.ceil(duration / interval_duration))
+        for j in range(num_intervals):
+            interval_start = start_time + j * interval_duration
+            interval_end = interval_start + interval_duration
+            interval_bytes = sum(length for t, length in zip(timestamps, lengths) 
+                                 if interval_start <= t < interval_end)
+            interval_bandwidth = (interval_bytes * 8) / (interval_duration * 1e6)
+            max_bandwidth[i] = max(max_bandwidth[i], interval_bandwidth)
+
+    return unique_flows, avg_bandwidth, max_bandwidth
+
+
 
 
 def create_connections_dataframe(packet_data, capture):
     # Calculate bandwidth
-    unique_pairs, avg_bandwidth, max_bandwidth = calculate_bandwidth(capture)
+    unique_flows, avg_bandwidth, max_bandwidth = calculate_bandwidth(capture)
     
-    # Convert unique_pairs from a NumPy array to a list of tuples for easy lookup
-    unique_pairs_list = [tuple(pair) for pair in unique_pairs]
+    # Convert unique_flows from a NumPy array to a list of tuples for easy lookup
+    unique_flows_list = [tuple(flow) for flow in unique_flows]
     
     # Dictionary to hold the aggregated data before creating DataFrame
     aggregated_data = {}
 
-    # Aggregate packet data by source-destination pair and protocol
+    # Aggregate packet data by flow
     for ptype, data in packet_data.items():
-
-        # Skip IGMP data for this aggregation as it has a different structure
+        # Skip IGMP data for this aggregation
         if ptype == 'IGMP':
             continue
 
         for info in data['info']:
             if info.get('src_ip') and info.get('dst_ip'):
-                src_dst_pair = (info['src_ip'], info['dst_ip'])
-                if src_dst_pair in unique_pairs_list:
-                    pair_index = unique_pairs_list.index(src_dst_pair)
-                    avg_bw = avg_bandwidth[pair_index]
-                    max_bw = max_bandwidth[pair_index]
+                flow = (info['src_ip'], info['dst_ip'], info.get('src_port', 'None'), info.get('dst_port', 'None'))
+                if flow in unique_flows_list:
+                    flow_index = unique_flows_list.index(flow)
+                    avg_bw = avg_bandwidth[flow_index]
+                    max_bw = max_bandwidth[flow_index]
                 else:
-                    avg_bw = max_bw = 0  # No bandwidth if pair not found
+                    avg_bw = max_bw = 0
 
-                simplified_protocol = ptype.split('|')[0]  # Keep only the first part before '|'
-                dst_port = info.get('dst_port', 'Unknown')  # Extract destination port
-                key = (src_dst_pair[0], src_dst_pair[1], dst_port, simplified_protocol)
+                simplified_protocol = ptype.split('|')[0]
+                key = (info['src_ip'], info['dst_ip'], info.get('dst_port', 'None'), simplified_protocol)
 
                 if key not in aggregated_data:
                     aggregated_data[key] = {
@@ -320,6 +334,7 @@ def create_connections_dataframe(packet_data, capture):
     df.sort_values(by=['Source IP', 'Destination IP', 'Port', 'Protocol'], inplace=True)
     
     return df
+
 
 
 
