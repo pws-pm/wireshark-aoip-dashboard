@@ -227,7 +227,7 @@ def plot_inter_arrival_times_box(packet_data):
 
     return other_fig
 
-def calculate_bandwidth(capture, interval_duration=1):
+def calculate_bandwidth(capture, interval_duration=0.1):
     # Extract packet lengths, timestamps, and flow information
     packets_info = [(int(packet.length), float(packet.sniff_timestamp), 
                      packet.ip.src, packet.ip.dst, 
@@ -259,20 +259,21 @@ def calculate_bandwidth(capture, interval_duration=1):
         duration = end_time - start_time
         total_bytes = sum(lengths)
 
-        # Average bandwidth
-        avg_bandwidth[i] = (total_bytes * 8) / (duration * 1e6)
+        # Check for zero duration to avoid division by zero
+        if duration > 0:
+            avg_bandwidth[i] = (total_bytes * 8) / (duration * 1e6)
+        else:
+            avg_bandwidth[i] = 0
 
-        # Maximum bandwidth using a 1-second sliding window
+        # Maximum bandwidth using a smaller sliding window
         sorted_packets = sorted(zip(timestamps, lengths))
-        max_window_bytes = 0
-        window_start = 0
+
         for j in range(len(sorted_packets)):
-            while sorted_packets[j][0] - sorted_packets[window_start][0] > 1:
-                window_start += 1
-            window_bytes = sum(packet[1] for packet in sorted_packets[window_start:j+1])
-            max_window_bytes = max(max_window_bytes, window_bytes)
-        
-        max_bandwidth[i] = (max_window_bytes * 8) / 1e6  # Convert to Mbps
+            window_start_time = sorted_packets[j][0]
+            window_end_time = window_start_time + interval_duration
+            window_bytes = sum(packet[1] for packet in sorted_packets if window_start_time <= packet[0] < window_end_time)
+            window_bandwidth = (window_bytes * 8) / (interval_duration * 1e6)
+            max_bandwidth[i] = max(max_bandwidth[i], window_bandwidth)
 
     return unique_flows, avg_bandwidth, max_bandwidth
 
