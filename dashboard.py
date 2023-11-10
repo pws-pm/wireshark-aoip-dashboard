@@ -616,6 +616,9 @@ if uploaded_file is not None:
         st.header("Connections Overview")
         st.markdown("Protocols used by each source IP, bandwidth, and percentage of traffic for each protocol per source IP.")
         st.dataframe(connections_df)
+        # Sum of Average Bandwidth
+        total_avg_bandwidth = connections_df['Avg Mbps'].sum()
+        st.markdown(f"**Total Average Bandwidth:** {total_avg_bandwidth:.2f} Mbps")
         st.markdown('---')
 
         # Audio packets histogram
