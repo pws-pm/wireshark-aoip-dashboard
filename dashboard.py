@@ -441,6 +441,7 @@ def plot_audio_streams_histogram(packet_data):
     # Constants for plotting
     MAX_PACKETS_DISPLAYED = 5  # Maximum number of packets/ranges to show in the tooltip
     num_bins = 50  # Number of bins for the histogram
+    PAD_RATIO = 0.05  # Padding ratio for the x-axis
 
     # Prepare subplots; one for each audio stream
     audio_streams = [ptype for ptype in packet_data if ptype.startswith('Audio_')]
@@ -454,17 +455,21 @@ def plot_audio_streams_histogram(packet_data):
         stream_data = packet_data[stream]['inter_arrival_times']
         packet_numbers = [info['packet_number'] for info in packet_data[stream]['info']]
 
-        # Filter out any times that are 0
+        # Filter out any times that are 0 or negative
         filtered_stream_data = [(time, pkt_num) for time, pkt_num in zip(stream_data, packet_numbers) if time > 0]
         if filtered_stream_data:
             stream_times = [time for time, _ in filtered_stream_data]
 
-            # Define bins for histogram
-            min_time = min(stream_times)
+            # Ensure there are valid times for histogram
+            if not stream_times:
+                continue
+
+            # Define bins for histogram with padding
+            min_time = max(min(stream_times), 1e-3)  # Avoid zero or very small values
             max_time = max(stream_times)
-            log_min = np.log10(min_time)
-            log_max = np.log10(max_time)
-            log_bins = np.logspace(log_min, log_max, num_bins)
+            padded_min_time = min_time / (1 + PAD_RATIO)  # Apply padding
+            padded_max_time = max_time * (1 + PAD_RATIO)
+            log_bins = np.logspace(np.log10(padded_min_time), np.log10(padded_max_time), num_bins)
             bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
 
             # Create the histogram data
@@ -483,7 +488,6 @@ def plot_audio_streams_histogram(packet_data):
             for bin_index in range(num_bins):
                 bin_packets = bin_packet_numbers[bin_index]
                 tooltip_content = tooltip_content_for_bin(bin_packets, MAX_PACKETS_DISPLAYED)
-                # For each midpoint, we must add the same tooltip content twice since we repeat the midpoints
                 customdata.extend([tooltip_content, tooltip_content])
 
             # Add filled scatter plot to the subplot
@@ -501,8 +505,14 @@ def plot_audio_streams_histogram(packet_data):
                 row=i,
                 col=1
             )
-        else:
-            return None  # Return None if there are no audio streams to plot
+
+            # Update x-axis range with padding
+            fig.update_xaxes(
+                title='Inter-arrival Time (ms)',
+                type='log',
+                range=[np.log10(padded_min_time), np.log10(padded_max_time)],
+                row=i, col=1
+            )
 
     # Update the layout for the figure
     fig.update_layout(
@@ -512,16 +522,8 @@ def plot_audio_streams_histogram(packet_data):
         showlegend=False
     )
 
-    # Update x-axis and y-axis to use log scales and custom tick labels for each subplot
+    # Update y-axis to use log scales for each subplot
     for j in range(1, num_streams + 1):
-        fig.update_xaxes(
-            title='Inter-arrival Time (ms)', 
-            type='log',
-            tickvals=bin_midpoints,  # Set custom tick values to the middle of the bins
-            ticktext=[f"{x:.2f}" for x in bin_midpoints],  # Custom tick text with reduced precision
-            row=j, 
-            col=1
-        )
         fig.update_yaxes(
             title='Quantity', 
             type='log', 
@@ -530,6 +532,10 @@ def plot_audio_streams_histogram(packet_data):
         )
 
     return fig
+
+
+
+
 
 
 
