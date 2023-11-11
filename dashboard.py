@@ -59,25 +59,24 @@ def load_capture(file_path):
     return pyshark.FileCapture(file_path, only_summaries=False)
 
 def classify_packet(packet, packet_number, igmp_info=None):
-    # Dictionary of PTP message types
-    ptp_message_types = {
-        '0x00': 'PTP_Sync',
-        '0x01': 'PTP_Delay_Req',
-        '0x02': 'PTP_Pdelay_Req',
-        '0x03': 'PTP_Pdelay_Resp',
-        '0x04': 'PTP_Reserved',
-        '0x05': 'PTP_Reserved',
-        '0x06': 'PTP_Reserved',
-        '0x07': 'PTP_Reserved',
-        '0x08': 'PTP_Follow_Up',
-        '0x09': 'PTP_Delay_Resp',
-        '0x0a': 'PTP_Pdelay_Resp_Follow_Up',
-        '0x0b': 'PTP_Announce',
-        '0x0c': 'PTP_Signaling',
-        '0x0d': 'PTP_Management',
-        '0x0e': 'PTP_Reserved',
-        '0x0f': 'PTP_Reserved',
-        # Add any additional or custom message types here
+    ptp_v2_message_types = {
+        '0x00': 'PTP_v2_Sync',
+        '0x01': 'PTP_v2_Delay_Req',
+        '0x02': 'PTP_v2_Pdelay_Req',
+        '0x03': 'PTP_v2_Pdelay_Resp',
+        '0x08': 'PTP_v2_Follow_Up',
+        '0x09': 'PTP_v2_Delay_Resp',
+        '0x0a': 'PTP_v2_Pdelay_Resp_Follow_Up',
+        '0x0b': 'PTP_v2_Announce',
+        '0x0c': 'PTP_v2_Signaling',
+        '0x0d': 'PTP_v2_Management',
+    }
+    ptp_v1_message_types = {
+        '0x00': 'PTP_v1_Sync',
+        '0x01': 'PTP_v1_Delay_Req',
+        '0x02': 'PTP_v1_Follow_Up',
+        '0x03': 'PTP_v1_Delay_Resp',
+        '0x04': 'PTP_v1_Management',
     }
 
     # Determines the type of the packet and gathers basic info
@@ -110,19 +109,33 @@ def classify_packet(packet, packet_number, igmp_info=None):
             'dst_port': dst_port
         })
 
-    # Check for PTP layer and classify PTP messages
-    if hasattr(packet, 'ptp') and packet.ptp:
-        ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
-        packet_type = ptp_message_types.get(ptp_message_type_code, 'Unknown_PTP_Type')
+        # Check for PTP layer and classify PTP messages
+        if hasattr(packet, 'ptp'):
+            # Handle PTP v2 packets
+            if hasattr(packet.ptp, 'v2.versionptp'):
+                ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
+                packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+                packet_info.update({
+                    'sequence_id': packet.ptp.get_field_value('ptp.v2.sequenceid'),
+                    'source_port_id': packet.ptp.get_field_value('ptp.v2.sourceportid'),
+                    'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity'),
+                    'origin_timestamp_seconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'),
+                    'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'),
+                })
+            # Handle PTP v1 packets
+            elif hasattr(packet.ptp, 'versionptp'):
+                ptp_message_type_code = packet.ptp.get_field_value('ptp.messagetype')
+                packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+                packet_info.update({
+                    'sequence_id': packet.ptp.get_field_value('ptp.sequenceid'),
+                    'source_port_id': packet.ptp.get_field_value('ptp.sourceportid'),
+                    'clock_identity': packet.ptp.get_field_value('ptp.sourceuuid'),
+                    'origin_timestamp_seconds': packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_seconds'),
+                    'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_nanoseconds'),
+                })
+            else:
+                packet_type = 'Unknown_PTP_Type'
 
-        # Update packet_info with PTP specific details
-        packet_info.update({
-            'sequence_id': packet.ptp.get_field_value('ptp.v2.sequenceid'),
-            'source_port_id': packet.ptp.get_field_value('ptp.v2.sourceportid'),
-            'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity'),
-            'origin_timestamp_seconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'),
-            'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'),
-        })
 
     # Classification logic for IGMP
     if 'igmp' in packet:
