@@ -456,50 +456,53 @@ def plot_audio_streams_histogram(packet_data):
 
         # Filter out any times that are 0
         filtered_stream_data = [(time, pkt_num) for time, pkt_num in zip(stream_data, packet_numbers) if time > 0]
-        stream_times, stream_packets = zip(*filtered_stream_data)
+        if filtered_stream_data:
+            stream_times = [time for time, _ in filtered_stream_data]
 
-        # Define bins for histogram
-        min_time = min(stream_times)
-        max_time = max(stream_times)
-        log_min = np.log10(min_time)
-        log_max = np.log10(max_time)
-        log_bins = np.logspace(log_min, log_max, num_bins)
-        bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
+            # Define bins for histogram
+            min_time = min(stream_times)
+            max_time = max(stream_times)
+            log_min = np.log10(min_time)
+            log_max = np.log10(max_time)
+            log_bins = np.logspace(log_min, log_max, num_bins)
+            bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
 
-        # Create the histogram data
-        histogram_data = np.histogram(stream_times, bins=log_bins)
-        bin_counts = histogram_data[0]
-        bin_edges = histogram_data[1]
+            # Create the histogram data
+            histogram_data = np.histogram(stream_times, bins=log_bins)
+            bin_counts = histogram_data[0]
+            bin_edges = histogram_data[1]
 
-        # Calculate packet numbers for each bin
-        bin_packet_numbers = [[] for _ in range(num_bins)]
-        for time, packet_num in filtered_stream_data:
-            bin_index = np.digitize(time, bin_edges) - 1  # -1 as np.digitize returns 1-based indices
-            bin_packet_numbers[bin_index].append(packet_num)
+            # Calculate packet numbers for each bin
+            bin_packet_numbers = [[] for _ in range(num_bins)]
+            for time, packet_num in filtered_stream_data:
+                bin_index = np.digitize(time, bin_edges) - 1  # -1 as np.digitize returns 1-based indices
+                bin_packet_numbers[bin_index].append(packet_num)
 
-        # Prepare tooltip content
-        customdata = []
-        for bin_index in range(num_bins):
-            bin_packets = bin_packet_numbers[bin_index]
-            tooltip_content = tooltip_content_for_bin(bin_packets, MAX_PACKETS_DISPLAYED)
-            # For each midpoint, we must add the same tooltip content twice since we repeat the midpoints
-            customdata.extend([tooltip_content, tooltip_content])
+            # Prepare tooltip content
+            customdata = []
+            for bin_index in range(num_bins):
+                bin_packets = bin_packet_numbers[bin_index]
+                tooltip_content = tooltip_content_for_bin(bin_packets, MAX_PACKETS_DISPLAYED)
+                # For each midpoint, we must add the same tooltip content twice since we repeat the midpoints
+                customdata.extend([tooltip_content, tooltip_content])
 
-        # Add filled scatter plot to the subplot
-        fig.add_trace(
-            go.Scatter(
-                x=bin_midpoints.repeat(2),
-                y=np.repeat(bin_counts, 2),
-                mode='lines',
-                line=dict(color='rgba(0, 100, 80, .8)', shape='hv'),
-                fill='tozeroy',
-                name=stream,
-                customdata=customdata,
-                hovertemplate="<b>Bin Range: %{x:.2f} ms</b><br>Packet index: %{customdata}<extra></extra>"
-            ),
-            row=i,
-            col=1
-        )
+            # Add filled scatter plot to the subplot
+            fig.add_trace(
+                go.Scatter(
+                    x=bin_midpoints.repeat(2),
+                    y=np.repeat(bin_counts, 2),
+                    mode='lines',
+                    line=dict(color='rgba(0, 100, 80, .8)', shape='hv'),
+                    fill='tozeroy',
+                    name=stream,
+                    customdata=customdata,
+                    hovertemplate="<b>Bin Range: %{x:.2f} ms</b><br>Packet index: %{customdata}<extra></extra>"
+                ),
+                row=i,
+                col=1
+            )
+        else:
+            return None  # Return None if there are no audio streams to plot
 
     # Update the layout for the figure
     fig.update_layout(
