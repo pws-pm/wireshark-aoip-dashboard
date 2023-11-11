@@ -65,12 +65,18 @@ def classify_packet(packet, packet_number, igmp_info=None):
         '0x01': 'PTP_Delay_Req',
         '0x02': 'PTP_Pdelay_Req',
         '0x03': 'PTP_Pdelay_Resp',
+        '0x04': 'PTP_Reserved',
+        '0x05': 'PTP_Reserved',
+        '0x06': 'PTP_Reserved',
+        '0x07': 'PTP_Reserved',
         '0x08': 'PTP_Follow_Up',
         '0x09': 'PTP_Delay_Resp',
         '0x0a': 'PTP_Pdelay_Resp_Follow_Up',
         '0x0b': 'PTP_Announce',
         '0x0c': 'PTP_Signaling',
         '0x0d': 'PTP_Management',
+        '0x0e': 'PTP_Reserved',
+        '0x0f': 'PTP_Reserved',
         # Add any additional or custom message types here
     }
 
@@ -600,7 +606,7 @@ st.write("\n")
 uploaded_file = st.sidebar.file_uploader("Choose a pcap file", type=["pcap", "pcapng"])
 
 if uploaded_file is not None:
-    with st.spinner("Processing, this may take a while if the file is large..."):
+    with st.spinner("Processing, this may take several minutes if the file is large ..."):
         # Save the uploaded file to a temporary file
         temp_file_path = "temp.pcapng"
         with open(temp_file_path, "wb") as f:

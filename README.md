@@ -9,6 +9,9 @@ This repository contains a Streamlit application that analyzes packet captures (
 - Shows a connections list organised by ip and protocols
 - Display statistics for multicast audio and other protocol packet inter-arrival times.
 
+## Online Demo
+For a quick tryout of this application without needing to set up your local environment, visit the online version hosted at https://wireshark-aoip-dashboard.streamlit.app/. Note that the performance might be limited compared to the local version.
+
 ## Installation
 
 Before using this application, you need to install the necessary dependencies:
