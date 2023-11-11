@@ -495,7 +495,7 @@ def plot_audio_streams_histogram(packet_data):
                 fill='tozeroy',
                 name=stream,
                 customdata=customdata,
-                hovertemplate="<b>Bin Range: %{x:.2f}ms - %{x:.2f}ms</b><br>Packets: %{customdata}<extra></extra>"
+                hovertemplate="<b>Bin Range: %{x:.2f} ms</b><br>Packet index: %{customdata}<extra></extra>"
             ),
             row=i,
             col=1
