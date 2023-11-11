@@ -72,11 +72,11 @@ def classify_packet(packet, packet_number, igmp_info=None):
         '0x0d': 'PTP_v2_Management',
     }
     ptp_v1_message_types = {
-        '0x00': 'PTP_v1_Sync',
-        '0x01': 'PTP_v1_Delay_Req',
-        '0x02': 'PTP_v1_Follow_Up',
-        '0x03': 'PTP_v1_Delay_Resp',
-        '0x04': 'PTP_v1_Management',
+        '0': 'PTP_v1_Sync',
+        '1': 'PTP_v1_Delay_Req',
+        '2': 'PTP_v1_Follow_Up',
+        '3': 'PTP_v1_Delay_Resp',
+        '4': 'PTP_v1_Management',
     }
 
     # Determines the type of the packet and gathers basic info
@@ -124,7 +124,7 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 })
             # Handle PTP v1 packets
             elif hasattr(packet.ptp, 'versionptp'):
-                ptp_message_type_code = packet.ptp.get_field_value('ptp.messagetype')
+                ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
                 packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
                 packet_info.update({
                     'sequence_id': packet.ptp.get_field_value('ptp.sequenceid'),
@@ -295,10 +295,6 @@ def calculate_bandwidth(capture, interval_duration=0.1):
             max_bandwidth[i] = max(max_bandwidth[i], window_bandwidth)
 
     return unique_flows, avg_bandwidth, max_bandwidth
-
-
-
-
 
 def create_connections_dataframe(packet_data, capture):
     # Calculate bandwidth
@@ -651,9 +647,11 @@ if uploaded_file is not None:
         other_fig = plot_inter_arrival_times_box(packet_data)
         st.plotly_chart(other_fig)
 
-        # PTP packets stats
-        if 'PTP_Sync' in packet_data:
-            display_summary_statistics(packet_data, 'PTP_Sync')
+        if 'PTP_v2_Sync' in packet_data:
+            display_summary_statistics(packet_data, 'PTP_v2_Sync')
+
+        if 'PTP_v1_Sync' in packet_data:
+            display_summary_statistics(packet_data, 'PTP_v1_Sync')
 
         # IGMP Visualization
         if 'IGMP' in packet_data:
