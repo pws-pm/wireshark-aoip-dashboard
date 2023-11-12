@@ -484,20 +484,13 @@ def plot_audio_streams_histogram(packet_data):
                 bin_packet_numbers[bin_index].append(packet_num)
 
             # Prepare tooltip content
-            customdata = []
-            for bin_index in range(num_bins):
-                bin_packets = bin_packet_numbers[bin_index]
-                tooltip_content = tooltip_content_for_bin(bin_packets, MAX_PACKETS_DISPLAYED)
-                customdata.extend([tooltip_content, tooltip_content])
+            customdata = [tooltip_content_for_bin(bin_packet_numbers[bin_index], MAX_PACKETS_DISPLAYED) for bin_index in range(num_bins)]
 
-            # Add filled scatter plot to the subplot
+            # Add bar plot to the subplot
             fig.add_trace(
-                go.Scatter(
-                    x=bin_midpoints.repeat(2),
-                    y=np.repeat(bin_counts, 2),
-                    mode='lines',
-                    line=dict(color='rgba(0, 100, 80, .8)', shape='hv'),
-                    fill='tozeroy',
+                go.Bar(
+                    x=bin_midpoints,
+                    y=bin_counts,
                     name=stream,
                     customdata=customdata,
                     hovertemplate="<b>Bin Range: %{x:.2f} ms</b><br>Packet index: %{customdata}<extra></extra>"
@@ -509,8 +502,8 @@ def plot_audio_streams_histogram(packet_data):
             # Update x-axis range with padding
             fig.update_xaxes(
                 title='Inter-arrival Time (ms)',
-                type='log',
-                range=[np.log10(padded_min_time), np.log10(padded_max_time)],
+                type='linear',
+                range=[padded_min_time, padded_max_time],
                 row=i, col=1
             )
 
@@ -532,6 +525,7 @@ def plot_audio_streams_histogram(packet_data):
         )
 
     return fig
+
 
 
 
