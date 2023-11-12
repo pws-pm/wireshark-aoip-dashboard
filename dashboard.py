@@ -377,29 +377,16 @@ def calculate_stats(times, packet_type):
         'Std Deviation (ms)': f"{std_dev:.3f}"
     }
 
-def display_summary_statistics(packet_data, packet_type=None):
-    # List to hold all statistics data
+def calculate_summary_stats(packet_data, packet_type_prefix):
     all_stats = []
-
-    # If a specific packet type is provided, display statistics only for that type
-    if packet_type:
-        if packet_type in packet_data and packet_data[packet_type]['inter_arrival_times']:
-            times = packet_data[packet_type]['inter_arrival_times']
+    for packet_type, data in packet_data.items():
+        if packet_type.startswith(packet_type_prefix) and data['inter_arrival_times']:
+            times = data['inter_arrival_times']
             stats = calculate_stats(times, packet_type)
             all_stats.append(stats)
-    # If no specific packet type is provided, display statistics for all audio streams
-    else:
-        for packet_type, data in packet_data.items():
-            if packet_type.startswith('Audio_') and data['inter_arrival_times']:
-                times = data['inter_arrival_times']
-                stats = calculate_stats(times, packet_type)
-                all_stats.append(stats)
-    
-    # Create a DataFrame for all the summary statistics
-    if all_stats:
-        summary_df = pd.DataFrame(all_stats)
-        # Display the DataFrame
-        st.dataframe(summary_df)
+
+    return pd.DataFrame(all_stats)
+
 
 def packet_ranges(packet_numbers):
     if not packet_numbers:
@@ -437,13 +424,11 @@ def tooltip_content_for_bin(bin_packets, max_display=5):
 
     return ", ".join(packet_display)
 
-def plot_audio_streams_histogram(packet_data):
-    # Constants for plotting
-    MAX_PACKETS_DISPLAYED = 5  # Maximum number of packets/ranges to show in the tooltip
-    num_bins = 50  # Number of bins for the histogram
-    PAD_RATIO = 0.05  # Padding ratio for the x-axis
+def plot_audio_streams_histogram(packet_data, summary_stats):
+    MAX_PACKETS_DISPLAYED = 5
+    num_bins = 50
+    PAD_RATIO = 0.05
 
-    # Prepare subplots; one for each audio stream
     audio_streams = [ptype for ptype in packet_data if ptype.startswith('Audio_')]
     num_streams = len(audio_streams)
     if num_streams == 0:
@@ -455,43 +440,40 @@ def plot_audio_streams_histogram(packet_data):
         stream_data = packet_data[stream]['inter_arrival_times']
         packet_numbers = [info['packet_number'] for info in packet_data[stream]['info']]
 
-        # Filter out any times that are 0 or negative
+        # Retrieve the median value for the current stream and convert it to float
+        median_val_series = summary_stats.loc[summary_stats['Flow'] == stream.replace('Audio_', '').replace('_', ':').capitalize(), 'Median (ms)']
+        if not median_val_series.empty:
+            median_val = float(median_val_series.iloc[0])
+        else:
+            continue  # Skip this stream if the median value is not available
+
+        double_median_val = 2 * median_val
+
         filtered_stream_data = [(time, pkt_num) for time, pkt_num in zip(stream_data, packet_numbers) if time > 0]
         if filtered_stream_data:
             stream_times = [time for time, _ in filtered_stream_data]
-
-            # Ensure there are valid times for histogram
             if not stream_times:
                 continue
 
-            # Define bins for histogram with padding
-            min_time = max(min(stream_times), 1e-3)  # Avoid zero or very small values
+            min_time = max(min(stream_times), 1e-3)
             max_time = max(stream_times)
-            padded_min_time = min_time / (1 + PAD_RATIO)  # Apply padding
+            padded_min_time = min_time / (1 + PAD_RATIO)
             padded_max_time = max_time * (1 + PAD_RATIO)
             log_bins = np.logspace(np.log10(padded_min_time), np.log10(padded_max_time), num_bins)
             bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
 
-            # Create the histogram data
             histogram_data = np.histogram(stream_times, bins=log_bins)
             bin_counts = histogram_data[0]
-            bin_edges = histogram_data[1]
+            bar_colors = ['red' if time >= double_median_val else 'darkgreen' for time in bin_midpoints]
 
-            # Calculate packet numbers for each bin
-            bin_packet_numbers = [[] for _ in range(num_bins)]
-            for time, packet_num in filtered_stream_data:
-                bin_index = np.digitize(time, bin_edges) - 1  # -1 as np.digitize returns 1-based indices
-                bin_packet_numbers[bin_index].append(packet_num)
-
-            # Prepare tooltip content
             customdata = [tooltip_content_for_bin(bin_packet_numbers[bin_index], MAX_PACKETS_DISPLAYED) for bin_index in range(num_bins)]
 
-            # Add bar plot to the subplot
             fig.add_trace(
                 go.Bar(
                     x=bin_midpoints,
                     y=bin_counts,
                     name=stream,
+                    marker_color=bar_colors,
                     customdata=customdata,
                     hovertemplate="<b>Bin Range: %{x:.2f} ms</b><br>Packet index: %{customdata}<extra></extra>"
                 ),
@@ -499,32 +481,16 @@ def plot_audio_streams_histogram(packet_data):
                 col=1
             )
 
-            # Update x-axis range with padding
-            fig.update_xaxes(
-                title='Inter-arrival Time (ms)',
-                type='linear',
-                range=[padded_min_time, padded_max_time],
-                row=i, col=1
-            )
+            fig.update_xaxes(title='Inter-arrival Time (ms)', type='linear', range=[padded_min_time, padded_max_time], row=i, col=1)
 
-    # Update the layout for the figure
-    fig.update_layout(
-        title='Histogram of Audio Packet Inter-arrival Times per Stream',
-        template='plotly_white',
-        height=300 * num_streams,  # Adjust height based on the number of streams
-        showlegend=False
-    )
+    fig.update_layout(title='Histogram of Audio Packet Inter-arrival Times per Stream', template='plotly_white', height=300 * num_streams, showlegend=False)
 
-    # Update y-axis to use log scales for each subplot
     for j in range(1, num_streams + 1):
-        fig.update_yaxes(
-            title='Quantity', 
-            type='log', 
-            row=j, 
-            col=1
-        )
+        fig.update_yaxes(title='Quantity', type='log', row=j, col=1)
 
     return fig
+
+
 
 
 
@@ -629,32 +595,28 @@ if uploaded_file is not None:
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
 
-        # Connections DataFrame
-        connections_df = create_connections_dataframe(packet_data, capture)
-        st.header("Connections Overview")
-        st.markdown("Protocols used by each source IP, bandwidth, and percentage of traffic for each protocol per source IP.")
-        st.dataframe(connections_df)
-        # Sum of Average Bandwidth
-        total_avg_bandwidth = connections_df['Avg Mbps'].sum()
-        st.markdown(f"**Total Average Bandwidth:** {total_avg_bandwidth:.2f} Mbps")
-        st.markdown('---')
+        # Calculate and display summary statistics for audio packets
+        audio_summary_stats = calculate_summary_stats(packet_data, "Audio_")
 
         # Audio packets histogram
-        audio_histogram_fig = plot_audio_streams_histogram(packet_data)
+        audio_histogram_fig = plot_audio_streams_histogram(packet_data, audio_summary_stats)
         if audio_histogram_fig is not None:
             st.plotly_chart(audio_histogram_fig)
-            display_summary_statistics(packet_data)
+            st.dataframe(audio_summary_stats)
             st.markdown('---')
 
-        # Inter-arrival times
+        # Inter-arrival times for other packet types
         other_fig = plot_inter_arrival_times_box(packet_data)
         st.plotly_chart(other_fig)
 
+        # Display statistics for specific packet types
         if 'PTP_v2_Sync' in packet_data:
-            display_summary_statistics(packet_data, 'PTP_v2_Sync')
+            ptp_v2_sync_stats = calculate_summary_stats(packet_data, 'PTP_v2_')
+            st.dataframe(ptp_v2_sync_stats)
 
         if 'PTP_v1_Sync' in packet_data:
-            display_summary_statistics(packet_data, 'PTP_v1_Sync')
+            ptp_v1_sync_stats = calculate_summary_stats(packet_data, 'PTP_v1_')
+            st.dataframe(ptp_v1_sync_stats)
 
         # IGMP Visualization
         if 'IGMP' in packet_data:
