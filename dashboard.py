@@ -440,7 +440,7 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
         stream_data = packet_data[stream]['inter_arrival_times']
         packet_numbers = [info['packet_number'] for info in packet_data[stream]['info']]
 
-        # Retrieve the median value for the current stream and convert it to float
+        # Retrieve median value and convert it to float
         median_val_series = summary_stats.loc[summary_stats['Flow'] == stream.replace('Audio_', '').replace('_', ':').capitalize(), 'Median (ms)']
         if not median_val_series.empty:
             median_val = float(median_val_series.iloc[0])
@@ -451,7 +451,7 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
 
         filtered_stream_data = [(time, pkt_num) for time, pkt_num in zip(stream_data, packet_numbers) if time > 0]
         if filtered_stream_data:
-            stream_times = [time for time, _ in filtered_stream_data]
+            stream_times, filtered_packet_numbers = zip(*filtered_stream_data)
             if not stream_times:
                 continue
 
@@ -460,17 +460,22 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
             padded_min_time = min_time / (1 + PAD_RATIO)
             padded_max_time = max_time * (1 + PAD_RATIO)
             log_bins = np.logspace(np.log10(padded_min_time), np.log10(padded_max_time), num_bins)
-            bin_midpoints = (log_bins[:-1] + log_bins[1:]) / 2
+
+            # Determine which packets fall into each bin
+            bin_packet_numbers = [[] for _ in range(num_bins)]
+            for time, packet_num in filtered_stream_data:
+                bin_index = np.digitize(time, log_bins) - 1
+                bin_packet_numbers[bin_index].append(packet_num)
 
             histogram_data = np.histogram(stream_times, bins=log_bins)
             bin_counts = histogram_data[0]
-            bar_colors = ['red' if time >= double_median_val else 'darkgreen' for time in bin_midpoints]
+            bar_colors = ['red' if time >= double_median_val else 'darkgreen' for time in log_bins[:-1]]
 
             customdata = [tooltip_content_for_bin(bin_packet_numbers[bin_index], MAX_PACKETS_DISPLAYED) for bin_index in range(num_bins)]
 
             fig.add_trace(
                 go.Bar(
-                    x=bin_midpoints,
+                    x=log_bins[:-1],  # Use bin start points as x-values
                     y=bin_counts,
                     name=stream,
                     marker_color=bar_colors,
@@ -489,6 +494,7 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
         fig.update_yaxes(title='Quantity', type='log', row=j, col=1)
 
     return fig
+
 
 
 
