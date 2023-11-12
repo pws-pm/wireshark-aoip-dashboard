@@ -426,7 +426,6 @@ def tooltip_content_for_bin(bin_packets, max_display=5):
 
 def plot_audio_streams_histogram(packet_data, summary_stats):
     MAX_PACKETS_DISPLAYED = 5
-    num_bins = 50
     PAD_RATIO = 0.05
 
     audio_streams = [ptype for ptype in packet_data if ptype.startswith('Audio_')]
@@ -451,7 +450,7 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
 
         filtered_stream_data = [(time, pkt_num) for time, pkt_num in zip(stream_data, packet_numbers) if time > 0]
         if filtered_stream_data:
-            stream_times, filtered_packet_numbers = zip(*filtered_stream_data)
+            stream_times = [time for time, _ in filtered_stream_data]
             if not stream_times:
                 continue
 
@@ -459,23 +458,28 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
             max_time = max(stream_times)
             padded_min_time = min_time / (1 + PAD_RATIO)
             padded_max_time = max_time * (1 + PAD_RATIO)
-            log_bins = np.logspace(np.log10(padded_min_time), np.log10(padded_max_time), num_bins)
 
-            # Determine which packets fall into each bin
+            # Dynamically adjust the number of bins based on the range
+            time_range = padded_max_time - padded_min_time
+            num_bins = min(max(int(time_range * 10000), 20), 100)  # Clamp the bin number between two values
+
+            linear_bins = np.linspace(padded_min_time, padded_max_time, num_bins)
+            bin_midpoints = (linear_bins[:-1] + linear_bins[1:]) / 2
+
+            histogram_data = np.histogram(stream_times, bins=linear_bins)
+            bin_counts = histogram_data[0]
+            bar_colors = ['red' if time >= double_median_val else 'darkgreen' for time in bin_midpoints]
+
             bin_packet_numbers = [[] for _ in range(num_bins)]
             for time, packet_num in filtered_stream_data:
-                bin_index = np.digitize(time, log_bins) - 1
+                bin_index = np.digitize(time, linear_bins) - 1
                 bin_packet_numbers[bin_index].append(packet_num)
-
-            histogram_data = np.histogram(stream_times, bins=log_bins)
-            bin_counts = histogram_data[0]
-            bar_colors = ['red' if time >= double_median_val else 'darkgreen' for time in log_bins[:-1]]
 
             customdata = [tooltip_content_for_bin(bin_packet_numbers[bin_index], MAX_PACKETS_DISPLAYED) for bin_index in range(num_bins)]
 
             fig.add_trace(
                 go.Bar(
-                    x=log_bins[:-1],  # Use bin start points as x-values
+                    x=bin_midpoints,
                     y=bin_counts,
                     name=stream,
                     marker_color=bar_colors,
@@ -494,6 +498,7 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
         fig.update_yaxes(title='Quantity', type='log', row=j, col=1)
 
     return fig
+
 
 
 
@@ -600,6 +605,16 @@ if uploaded_file is not None:
 
         # Process packets and calculate inter-arrival times
         packet_data = process_packets(capture)
+
+        # Connections DataFrame
+        connections_df = create_connections_dataframe(packet_data, capture)
+        st.header("Connections Overview")
+        st.markdown("Protocols used by each source IP, bandwidth, and percentage of traffic for each protocol per source IP.")
+        st.dataframe(connections_df)
+        # Sum of Average Bandwidth
+        total_avg_bandwidth = connections_df['Avg Mbps'].sum()
+        st.markdown(f"**Total Average Bandwidth:** {total_avg_bandwidth:.2f} Mbps")
+        st.markdown('---')
 
         # Calculate and display summary statistics for audio packets
         audio_summary_stats = calculate_summary_stats(packet_data, "Audio_")
