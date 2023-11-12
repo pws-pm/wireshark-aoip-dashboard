@@ -500,19 +500,6 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
     return fig
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 def visualize_igmp_info(igmp_info):
     # Create a directed graph
     G = nx.DiGraph()
