@@ -8,6 +8,14 @@ import numpy as np
 import os
 from collections import defaultdict
 
+# Define PTP message types for analysis
+ptp_types = [
+    'PTP_v2_Sync', 'PTP_v2_Delay_Req', 'PTP_v2_Pdelay_Req', 'PTP_v2_Pdelay_Resp',
+    'PTP_v2_Follow_Up', 'PTP_v2_Delay_Resp', 'PTP_v2_Pdelay_Resp_Follow_Up',
+    'PTP_v2_Announce', 'PTP_v2_Signaling', 'PTP_v2_Management',
+    'PTP_v1_Sync', 'PTP_v1_Delay_Req', 'PTP_v1_Follow_Up', 'PTP_v1_Delay_Resp', 'PTP_v1_Management'
+]
+
 class IGMPProcessor:
     def __init__(self, election_timeout=255):  # Default value can be set here, 255 is a bit more than twice the standard Query Interval
         self.election_timeout = election_timeout
@@ -41,9 +49,6 @@ class IGMPProcessor:
                 if igmp_version == '1' and igmp_type == 'Membership Report':
                     path_set[src_ip].add(src_ip)
 
-
-
-
     def get_igmp_info(self):
         return {
             'possible_queriers': self.possible_queriers,
@@ -51,7 +56,6 @@ class IGMPProcessor:
             'allowed_paths': self.allowed_paths,
             'denied_paths': self.denied_paths,
         }
-
 
 # Function to load the pcap file using PyShark
 def load_capture(file_path):
@@ -126,13 +130,24 @@ def classify_packet(packet, packet_number, igmp_info=None):
             elif hasattr(packet.ptp, 'versionptp'):
                 ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
                 packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+
+                # Common fields for all PTP v1 packets
                 packet_info.update({
                     'sequence_id': packet.ptp.get_field_value('ptp.sequenceid'),
                     'source_port_id': packet.ptp.get_field_value('ptp.sourceportid'),
-                    'clock_identity': packet.ptp.get_field_value('ptp.sourceuuid'),
-                    'origin_timestamp_seconds': packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_seconds'),
-                    'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_nanoseconds'),
                 })
+
+                # Conditional fields based on PTP v1 message type
+                if packet_type in ['PTP_v1_Sync', 'PTP_v1_Delay_Req']:
+                    # Fields specific to Sync and Delay Request messages
+                    packet_info['parent_uuid'] = packet.ptp.get_field_value('ptp.sdr.parentuuid')  # MAC of the slave's master
+                    packet_info['origin_timestamp_seconds'] = packet.ptp.get_field_value('ptp.fu.origintimestamp_seconds')
+                    packet_info['origin_timestamp_nanoseconds'] = packet.ptp.get_field_value('ptp.fu.origintimestamp_nanoseconds')
+
+                elif packet_type == 'PTP_v1_Follow_Up':
+                    # Fields specific to Follow Up messages
+                    packet_info['preciseorigin_timestamp_seconds'] = packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_seconds')
+                    packet_info['preciseorigin_timestamp_nanoseconds'] = packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_nanoseconds')
             else:
                 packet_type = 'Unknown_PTP_Type'
 
@@ -499,6 +514,31 @@ def plot_audio_streams_histogram(packet_data, summary_stats):
 
     return fig
 
+def create_ptp_relationships_dataframe(packet_data):
+    devices = {}
+    ptp_versions = {'PTP_v1_': 'PTP v1', 'PTP_v2_': 'PTP v2'}
+
+    for packet_type, data in packet_data.items():
+        if 'PTP_v1_' in packet_type or 'PTP_v2_' in packet_type:
+            for packet in data['info']:
+                src_ip = packet['src_ip']
+                protocol = ptp_versions[packet_type[:7]]
+
+                if 'PTP_v1_' in packet_type:
+                    # For PTP v1, use parent_uuid for master-slave relationship
+                    if 'Sync' in packet_type or 'Delay_Req' in packet_type:
+                        master_uuid = packet.get('parent_uuid', None)
+                        if master_uuid:
+                            # Slave device
+                            devices[src_ip] = {'role': 'Slave', 'master_uuid': master_uuid, 'protocol': protocol}
+                        else:
+                            # Master device
+                            devices[src_ip] = {'role': 'Master', 'master_uuid': None, 'protocol': protocol}
+                # Add similar logic for PTP v2 if needed
+
+    device_list = [{'IP Address': ip, **details} for ip, details in devices.items()]
+    return pd.DataFrame(device_list)
+
 
 def visualize_igmp_info(igmp_info):
     # Create a directed graph
@@ -625,6 +665,11 @@ if uploaded_file is not None:
         if 'PTP_v1_Sync' in packet_data:
             ptp_v1_sync_stats = calculate_summary_stats(packet_data, 'PTP_v1_')
             st.dataframe(ptp_v1_sync_stats)
+
+        # Create and display the PTP master-client relationships DataFrame
+        st.header("PTP Overview")
+        ptp_relationships_df = create_ptp_relationships_dataframe(packet_data)
+        st.dataframe(ptp_relationships_df)
 
         # IGMP Visualization
         if 'IGMP' in packet_data:
