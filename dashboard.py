@@ -85,7 +85,7 @@ def classify_packet(packet, packet_number, igmp_info=None):
 
     # Determines the type of the packet and gathers basic info
     packet_type = 'Non-IP'
-    packet_info = {'packet_number': packet_number}
+    packet_info = {'packet_number': packet_number, 'local_capture_timestamp': float(packet.sniff_timestamp)}
     
     if hasattr(packet, 'ip'):
         dst_port = packet[packet.transport_layer].dstport if packet.transport_layer and hasattr(packet, packet.transport_layer) else None
@@ -119,13 +119,28 @@ def classify_packet(packet, packet_number, igmp_info=None):
             if hasattr(packet.ptp, 'v2.versionptp'):
                 ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
                 packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+
+                # Common fields for all PTP v2 packets
                 packet_info.update({
                     'sequence_id': packet.ptp.get_field_value('ptp.v2.sequenceid'),
                     'source_port_id': packet.ptp.get_field_value('ptp.v2.sourceportid'),
-                    'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity'),
-                    'origin_timestamp_seconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'),
-                    'origin_timestamp_nanoseconds': packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'),
+                    'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity')
                 })
+                if packet_type == 'PTP_v2_Sync':
+                    origin_timestamp_seconds = float(packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'))
+                    origin_timestamp_nanoseconds = float(packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'))
+                    ptp_timestamp = origin_timestamp_seconds + origin_timestamp_nanoseconds / 1e9
+                elif packet_type == 'PTP_v2_Follow_Up':
+                    precise_origin_timestamp_seconds = float(packet.ptp.get_field_value('ptp.v2.fu.preciseorigintimestamp.seconds'))
+                    precise_origin_timestamp_nanoseconds = float(packet.ptp.get_field_value('ptp.v2.fu.preciseorigintimestamp.nanoseconds'))
+                    ptp_timestamp = precise_origin_timestamp_seconds + precise_origin_timestamp_nanoseconds / 1e9
+                else:
+                    ptp_timestamp = None
+
+                if ptp_timestamp is not None:
+                    local_timestamp = packet_info['local_capture_timestamp']
+                    packet_info['ptp_time_offset'] = local_timestamp - ptp_timestamp
+
             # Handle PTP v1 packets
             elif hasattr(packet.ptp, 'versionptp'):
                 ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
@@ -137,17 +152,22 @@ def classify_packet(packet, packet_number, igmp_info=None):
                     'source_port_id': packet.ptp.get_field_value('ptp.sourceportid'),
                 })
 
-                # Conditional fields based on PTP v1 message type
+                # Handle Sync and Delay Request messages for PTP v1
                 if packet_type in ['PTP_v1_Sync', 'PTP_v1_Delay_Req']:
-                    # Fields specific to Sync and Delay Request messages
-                    packet_info['parent_uuid'] = packet.ptp.get_field_value('ptp.sdr.parentuuid')  # MAC of the slave's master
-                    packet_info['origin_timestamp_seconds'] = packet.ptp.get_field_value('ptp.fu.origintimestamp_seconds')
-                    packet_info['origin_timestamp_nanoseconds'] = packet.ptp.get_field_value('ptp.fu.origintimestamp_nanoseconds')
-
+                    packet_info['parent_uuid'] = packet.ptp.get_field_value('ptp.sdr.parentuuid') # MAC address of this slave's currenr master clock
+                    packet_info['grandmasterclock_uuid'] = packet.ptp.get_field_value('ptp.sdr.grandmasterclockuuid') # MAC address of the grand master clock
+                    ptp_timestamp = float(packet.ptp.get_field_value('ptp.sdr.origintimestamp'))
                 elif packet_type == 'PTP_v1_Follow_Up':
-                    # Fields specific to Follow Up messages
-                    packet_info['preciseorigin_timestamp_seconds'] = packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_seconds')
-                    packet_info['preciseorigin_timestamp_nanoseconds'] = packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp_nanoseconds')
+                    ptp_timestamp = float(packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp'))
+                elif packet_type == 'PTP_v1_Delay_Resp':
+                    ptp_timestamp = float(packet.ptp.get_field_value('ptp.dr.delayreceipttimestamp'))
+                else:
+                    ptp_timestamp = None
+
+                if ptp_timestamp is not None:
+                    local_timestamp = packet_info['local_capture_timestamp']
+                    packet_info['ptp_time_offset'] = local_timestamp - ptp_timestamp
+
             else:
                 packet_type = 'Unknown_PTP_Type'
 
