@@ -114,16 +114,16 @@ def load_capture(file_path):
 
 def classify_packet(packet, packet_number, igmp_info=None):
     ptp_v2_message_types = {
-        '0x00': 'PTP_v2_Sync',
-        '0x01': 'PTP_v2_Delay_Req',
-        '0x02': 'PTP_v2_Pdelay_Req',
-        '0x03': 'PTP_v2_Pdelay_Resp',
-        '0x08': 'PTP_v2_Follow_Up',
-        '0x09': 'PTP_v2_Delay_Resp',
-        '0x0a': 'PTP_v2_Pdelay_Resp_Follow_Up',
-        '0x0b': 'PTP_v2_Announce',
-        '0x0c': 'PTP_v2_Signaling',
-        '0x0d': 'PTP_v2_Management',
+        '0': 'PTP_v2_Sync',
+        '1': 'PTP_v2_Delay_Req',
+        '2': 'PTP_v2_Pdelay_Req',
+        '3': 'PTP_v2_Pdelay_Resp',
+        '8': 'PTP_v2_Follow_Up',
+        '9': 'PTP_v2_Delay_Resp',
+        '10': 'PTP_v2_Pdelay_Resp_Follow_Up',
+        '11': 'PTP_v2_Announce',
+        '12': 'PTP_v2_Signaling',
+        '13': 'PTP_v2_Management',
     }
     ptp_v1_message_types = {
         '0': 'PTP_v1_Sync',
@@ -169,10 +169,8 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 # Handle PTP v2 packets
                 if hasattr(packet.ptp, 'v2.versionptp'):
                     ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
-                    if ptp_message_type_code is not None:
-                        packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
-                    else:
-                        packet_type = 'Unknown_PTP_Type'
+                    normalized_code = str(int(ptp_message_type_code, 16))
+                    packet_type = ptp_v2_message_types.get(normalized_code, 'Unknown_PTP_Type')
 
                     # Common fields for all PTP v2 packets
                     packet_info.update({
@@ -210,11 +208,9 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 # Handle PTP v1 packets
                 elif hasattr(packet.ptp, 'versionptp'):
                     ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
-                    if ptp_message_type_code is not None:
-                        packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
-                    else:
-                        packet_type = 'Unknown_PTP_Type'
-
+                    normalized_code = str(int(ptp_message_type_code, 16))
+                    packet_type = ptp_v1_message_types.get(normalized_code, 'Unknown_PTP_Type')
+                    
                     # Common fields for all PTP v1 packets
                     packet_info.update({
                         'sequence_id': packet.ptp.get_field_value('ptp.sequenceid'),
