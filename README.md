@@ -10,7 +10,7 @@ This repository contains a Streamlit application that analyzes packet captures (
 - Display statistics for multicast audio and other protocol packet inter-arrival times.
 
 ## Online Demo
-For a quick tryout of this application without needing to set up your local environment, visit the online version hosted at https://wireshark-aoip-dashboard.streamlit.app/. Note that the performance might be limited compared to the local version.
+For a quick tryout of this application without needing to set up your local environment, visit the online version hosted at https://wireshark-aoip-dashboard.streamlit.app/. Note that the features and performance might be limited compared to the local version. PTP v2 is not supported in the online version.
 
 ## Installation
 
@@ -37,6 +37,8 @@ sudo apt-get install wireshark
 ```bash
 choco install wireshark
 ```
+
+or visit https://www.wireshark.org/download.html
 
 ### Installing Python Dependencies
 
