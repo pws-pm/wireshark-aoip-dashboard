@@ -321,22 +321,22 @@ def update_packet_data_structure(packet_data, packet_type, packet_info):
 
 def process_packets(capture):
     packet_data = defaultdict(lambda: defaultdict(list))
-    ptp_packet_count = 0
+    #ptp_packet_count = 0
     last_timestamps = {}
     igmp_processor = IGMPProcessor(election_timeout=255)
 
     for packet_number, packet in enumerate(capture, start=1):
         packet_type, packet_info = classify_packet(packet, packet_number)
         # Diagnostic print for the first two PTP packets
-        if 'ptp' in packet and ptp_packet_count < 10:
-            ptp_packet_count += 1
-            st.write(f"Packet #{packet_number} PTP Attributes:")
-            if hasattr(packet.ptp, 'v2.versionptp'):
-                st.write("PTP v2 Message Type:", packet.ptp.get_field_value('ptp.v2.messagetype'))
-                st.write("\n")
-            elif hasattr(packet.ptp, 'versionptp'):
-                st.write("PTP v1 Control Field:", packet.ptp.get_field_value('ptp.controlfield'))
-                st.write("\n")
+        #if 'ptp' in packet and ptp_packet_count < 10:
+        #    ptp_packet_count += 1
+        #    st.write(f"Packet #{packet_number} PTP Attributes:")
+        #    if hasattr(packet.ptp, 'v2.versionptp'):
+        #        st.write("PTP v2 Message Type:", packet.ptp.get_field_value('ptp.v2.messagetype'))
+        #        st.write("\n")
+        #    elif hasattr(packet.ptp, 'versionptp'):
+        #        st.write("PTP v1 Control Field:", packet.ptp.get_field_value('ptp.controlfield'))
+        #        st.write("\n")
 
         calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps)
         update_packet_data_structure(packet_data, packet_type, packet_info)
