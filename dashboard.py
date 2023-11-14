@@ -18,17 +18,54 @@ ptp_types = [
 
 # Define mappings for clock accuracy and time source based on IEEE 1588 specification
 clock_accuracy_mapping = {
-    0x20: '25ns',
-    0x21: '100ns',
-    0x22: '250ns',
-    # ... other mappings ...
+    0x17: "within 1 ps",
+    0x18: "within 2.5 ps",
+    0x19: "within 10 ps",
+    0x1A: "within 25 ps",
+    0x1B: "within 100 ps",
+    0x1C: "within 250 ps",
+    0x1D: "within 1 ns",
+    0x1E: "within 2.5 ns",
+    0x1F: "within 10 ns",
+    0x20: "within 25 ns",
+    0x21: "within 100 ns",
+    0x22: "within 250 ns",
+    0x23: "within 1 us",
+    0x24: "within 2.5 us",
+    0x25: "within 10 us",
+    0x26: "within 25 us",
+    0x27: "within 100 us",
+    0x28: "within 250 us",
+    0x29: "within 1 ms",
+    0x2A: "within 2.5 ms",
+    0x2B: "within 10 ms",
+    0x2C: "within 25 ms",
+    0x2D: "within 100 ms",
+    0x2E: "within 250 ms",
+    0x2F: "within 1 s",
+    0x30: "within 10 s",
+    0x31: "within >10 s",
+    0x32: "reserved",
+    0x80: "for alternate profiles",
+    0xFE: "accuracy unknown",
+    0xFF: "reserved"
 }
+
 time_source_mapping = {
-    0x10: 'Atomic Clock',
-    0x20: 'GPS',
-    0x30: 'Terrestrial Radio',
-    # ... other mappings ...
+    0x10: "atomic clock",
+    0x20: "gps",
+    0x30: "terrestrial radio",
+    0x40: "ptp",
+    0x50: "ntp",
+    0x60: "handset",
+    0x90: "other",
+    0xA0: "internal oscillator",
+    0xF0: "master clock (arb timescale)",
+    0xF1: "master clock (initially local reference)",
+    # 0xF2 to 0xFE: "for use by alternate ptp profiles",  # This range can be handled as a special case in your code
+    0xFF: "reserved"
 }
+
 
 class IGMPProcessor:
     def __init__(self, election_timeout=255):  # Default value can be set here, 255 is a bit more than twice the standard Query Interval
