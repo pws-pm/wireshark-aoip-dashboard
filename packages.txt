@@ -1,1 +1,1 @@
-tshark
+tshark==4.1.0
