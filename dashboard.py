@@ -169,7 +169,10 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 # Handle PTP v2 packets
                 if hasattr(packet.ptp, 'v2.versionptp'):
                     ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
-                    packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+                    if ptp_message_type_code is not None:
+                        packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+                    else:
+                        packet_type = 'Unknown_PTP_Type'
 
                     # Common fields for all PTP v2 packets
                     packet_info.update({
@@ -207,7 +210,10 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 # Handle PTP v1 packets
                 elif hasattr(packet.ptp, 'versionptp'):
                     ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
-                    packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+                    if ptp_message_type_code is not None:
+                        packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+                    else:
+                        packet_type = 'Unknown_PTP_Type'
 
                     # Common fields for all PTP v1 packets
                     packet_info.update({
