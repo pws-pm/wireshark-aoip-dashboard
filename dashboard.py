@@ -321,13 +321,13 @@ def update_packet_data_structure(packet_data, packet_type, packet_info):
 
 def process_packets(capture):
     packet_data = defaultdict(lambda: defaultdict(list))
-    #ptp_packet_count = 0
+    #ptp_packet_count = 0 debug
     last_timestamps = {}
     igmp_processor = IGMPProcessor(election_timeout=255)
 
     for packet_number, packet in enumerate(capture, start=1):
         packet_type, packet_info = classify_packet(packet, packet_number)
-        # Diagnostic print for the first two PTP packets
+        # Debug print for PTP packets
         #if 'ptp' in packet and ptp_packet_count < 10:
         #    ptp_packet_count += 1
         #    st.write(f"Packet #{packet_number} PTP Attributes:")
