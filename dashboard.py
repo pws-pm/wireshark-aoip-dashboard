@@ -66,7 +66,6 @@ time_source_mapping = {
     0xFF: "reserved"
 }
 
-
 class IGMPProcessor:
     def __init__(self, election_timeout=255):  # Default value can be set here, 255 is a bit more than twice the standard Query Interval
         self.election_timeout = election_timeout
