@@ -16,6 +16,20 @@ ptp_types = [
     'PTP_v1_Sync', 'PTP_v1_Delay_Req', 'PTP_v1_Follow_Up', 'PTP_v1_Delay_Resp', 'PTP_v1_Management'
 ]
 
+# Define mappings for clock accuracy and time source based on IEEE 1588 specification
+clock_accuracy_mapping = {
+    0x20: '25ns',
+    0x21: '100ns',
+    0x22: '250ns',
+    # ... other mappings ...
+}
+time_source_mapping = {
+    0x10: 'Atomic Clock',
+    0x20: 'GPS',
+    0x30: 'Terrestrial Radio',
+    # ... other mappings ...
+}
+
 class IGMPProcessor:
     def __init__(self, election_timeout=255):  # Default value can be set here, 255 is a bit more than twice the standard Query Interval
         self.election_timeout = election_timeout
@@ -87,126 +101,142 @@ def classify_packet(packet, packet_number, igmp_info=None):
     packet_type = 'Non-IP'
     packet_info = {'packet_number': packet_number, 'local_capture_timestamp': float(packet.sniff_timestamp)}
     
-    if hasattr(packet, 'ip'):
-        dst_port = packet[packet.transport_layer].dstport if packet.transport_layer and hasattr(packet, packet.transport_layer) else None
+    try:
+        if hasattr(packet, 'ip'):
+            dst_port = packet[packet.transport_layer].dstport if packet.transport_layer and hasattr(packet, packet.transport_layer) else None
 
-        # Check for Dante and Multicast Audio classification
-        if hasattr(packet, 'udp') and packet.udp:
-            udp_dst_port = int(packet.udp.dstport)
-            if 14336 <= udp_dst_port <= 14591:
-                packet_type = 'Audio_DanteUnicast|' + packet.ip.dst + ':' + str(udp_dst_port)
-            elif 34336 <= udp_dst_port <= 34600:
-                packet_type = 'Audio_DanteViaUnicast|' + packet.ip.dst + ':' + str(udp_dst_port)
+            # Check for Dante and Multicast Audio classification
+            if hasattr(packet, 'udp') and packet.udp:
+                udp_dst_port = int(packet.udp.dstport)
+                if 14336 <= udp_dst_port <= 14591:
+                    packet_type = 'Audio_DanteUnicast|' + packet.ip.dst + ':' + str(udp_dst_port)
+                elif 34336 <= udp_dst_port <= 34600:
+                    packet_type = 'Audio_DanteViaUnicast|' + packet.ip.dst + ':' + str(udp_dst_port)
+                elif packet.ip.dst.startswith('239.') and dst_port:
+                    packet_type = 'Audio_Multicast|' + packet.ip.dst + ':' + dst_port
+
+            # Non-Dante audio packets classification
             elif packet.ip.dst.startswith('239.') and dst_port:
                 packet_type = 'Audio_Multicast|' + packet.ip.dst + ':' + dst_port
-
-        # Non-Dante audio packets classification
-        elif packet.ip.dst.startswith('239.') and dst_port:
-            packet_type = 'Audio_Multicast|' + packet.ip.dst + ':' + dst_port
-        else:
-            packet_type = packet.highest_layer
-
-        packet_info.update({
-            'src_ip': packet.ip.src,
-            'dst_ip': packet.ip.dst,
-            'src_port': packet[packet.transport_layer].srcport if packet.transport_layer else None,
-            'dst_port': dst_port
-        })
-
-        # Check for PTP layer and classify PTP messages
-        if hasattr(packet, 'ptp'):
-            # Handle PTP v2 packets
-            if hasattr(packet.ptp, 'v2.versionptp'):
-                ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
-                packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
-
-                # Common fields for all PTP v2 packets
-                packet_info.update({
-                    'sequence_id': packet.ptp.get_field_value('ptp.v2.sequenceid'),
-                    'source_port_id': packet.ptp.get_field_value('ptp.v2.sourceportid'),
-                    'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity')
-                })
-                if packet_type == 'PTP_v2_Sync':
-                    origin_timestamp_seconds = float(packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'))
-                    origin_timestamp_nanoseconds = float(packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'))
-                    ptp_timestamp = origin_timestamp_seconds + origin_timestamp_nanoseconds / 1e9
-                elif packet_type == 'PTP_v2_Follow_Up':
-                    precise_origin_timestamp_seconds = float(packet.ptp.get_field_value('ptp.v2.fu.preciseorigintimestamp.seconds'))
-                    precise_origin_timestamp_nanoseconds = float(packet.ptp.get_field_value('ptp.v2.fu.preciseorigintimestamp.nanoseconds'))
-                    ptp_timestamp = precise_origin_timestamp_seconds + precise_origin_timestamp_nanoseconds / 1e9
-                else:
-                    ptp_timestamp = None
-
-                if ptp_timestamp is not None:
-                    local_timestamp = packet_info['local_capture_timestamp']
-                    packet_info['ptp_time_offset'] = local_timestamp - ptp_timestamp
-
-            # Handle PTP v1 packets
-            elif hasattr(packet.ptp, 'versionptp'):
-                ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
-                packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
-
-                # Common fields for all PTP v1 packets
-                packet_info.update({
-                    'sequence_id': packet.ptp.get_field_value('ptp.sequenceid'),
-                    'source_port_id': packet.ptp.get_field_value('ptp.sourceportid'),
-                })
-
-                # Handle Sync and Delay Request messages for PTP v1
-                if packet_type in ['PTP_v1_Sync', 'PTP_v1_Delay_Req']:
-                    packet_info['parent_uuid'] = packet.ptp.get_field_value('ptp.sdr.parentuuid') # MAC address of this slave's currenr master clock
-                    packet_info['grandmasterclock_uuid'] = packet.ptp.get_field_value('ptp.sdr.grandmasterclockuuid') # MAC address of the grand master clock
-                    ptp_timestamp = float(packet.ptp.get_field_value('ptp.sdr.origintimestamp'))
-                elif packet_type == 'PTP_v1_Follow_Up':
-                    ptp_timestamp = float(packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp'))
-                elif packet_type == 'PTP_v1_Delay_Resp':
-                    ptp_timestamp = float(packet.ptp.get_field_value('ptp.dr.delayreceipttimestamp'))
-                else:
-                    ptp_timestamp = None
-
-                if ptp_timestamp is not None:
-                    local_timestamp = packet_info['local_capture_timestamp']
-                    packet_info['ptp_time_offset'] = local_timestamp - ptp_timestamp
-
             else:
-                packet_type = 'Unknown_PTP_Type'
+                packet_type = packet.highest_layer
+
+            packet_info.update({
+                'src_ip': packet.ip.src,
+                'dst_ip': packet.ip.dst,
+                'src_port': packet[packet.transport_layer].srcport if packet.transport_layer else None,
+                'dst_port': dst_port
+            })
+
+            # Check for PTP layer and classify PTP messages
+            if hasattr(packet, 'ptp'):
+                # Handle PTP v2 packets
+                if hasattr(packet.ptp, 'v2.versionptp'):
+                    ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
+                    packet_type = ptp_v2_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
+
+                    # Common fields for all PTP v2 packets
+                    packet_info.update({
+                        'sequence_id': packet.ptp.get_field_value('ptp.v2.sequenceid'),
+                        'source_port_id': packet.ptp.get_field_value('ptp.v2.sourceportid'),
+                        'clock_identity': packet.ptp.get_field_value('ptp.v2.clockidentity')
+                    })
+                    if packet_type == 'PTP_v2_Sync':
+                        origin_timestamp_seconds = float(packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.seconds'))
+                        origin_timestamp_nanoseconds = float(packet.ptp.get_field_value('ptp.v2.sdr.origintimestamp.nanoseconds'))
+                        ptp_timestamp = origin_timestamp_seconds + origin_timestamp_nanoseconds / 1e9
+                    elif packet_type == 'PTP_v2_Follow_Up':
+                        precise_origin_timestamp_seconds = float(packet.ptp.get_field_value('ptp.v2.fu.preciseorigintimestamp.seconds'))
+                        precise_origin_timestamp_nanoseconds = float(packet.ptp.get_field_value('ptp.v2.fu.preciseorigintimestamp.nanoseconds'))
+                        ptp_timestamp = precise_origin_timestamp_seconds + precise_origin_timestamp_nanoseconds / 1e9
+                    elif packet_type == 'PTP_v2_Announce':
+                        packet_info.update({
+                            'domain_number': packet.ptp.get_field_value('ptp.v2.domainnumber'),
+                            'priority1': packet.ptp.get_field_value('ptp.v2.an.priority1'),
+                            'grandmaster_clock_class': packet.ptp.get_field_value('ptp.v2.an.grandmasterclockclass'),
+                            'grandmaster_clock_accuracy': clock_accuracy_mapping.get(int(packet.ptp.get_field_value('ptp.v2.an.grandmasterclockaccuracy'), 16), 'Unknown'),
+                            'grandmaster_clock_variance': packet.ptp.get_field_value('ptp.v2.an.grandmasterclockvariance'),
+                            'priority2': packet.ptp.get_field_value('ptp.v2.an.priority2'),
+                            'time_source': time_source_mapping.get(int(packet.ptp.get_field_value('ptp.v2.timesource'), 16), 'Unknown')
+                        })
+                        ptp_timestamp = None  # Explicitly set to None as no timestamp calculation is required
+                    else:
+                        ptp_timestamp = None
 
 
-    # Classification logic for IGMP
-    if 'igmp' in packet:
-        packet_type = 'IGMP'
-        igmp_version = packet.igmp.version
-        igmp_type_code = packet.igmp.type
-        igmp_maddr = packet.igmp.maddr
+                    if ptp_timestamp is not None:
+                        local_timestamp = packet_info['local_capture_timestamp']
+                        packet_info['ptp_time_offset'] = local_timestamp - ptp_timestamp
 
-        # Map the hex type codes to strings for IGMPv2 and IGMPv3
-        igmp_type_map_v2_v3 = {
-            '0x11': 'Membership Query',
-            '0x16': 'Membership Report',
-            '0x17': 'Leave Group',
-            # Add any additional or custom IGMP types here for v2 and v3
-        }
+                # Handle PTP v1 packets
+                elif hasattr(packet.ptp, 'versionptp'):
+                    ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
+                    packet_type = ptp_v1_message_types.get(ptp_message_type_code.lower(), 'Unknown_PTP_Type')
 
-        # IGMPv1 specific mapping
-        igmp_type_map_v1 = {
-            '0x12': 'Membership Report',
-            # Add any additional or custom IGMP types here for v1
-        }
+                    # Common fields for all PTP v1 packets
+                    packet_info.update({
+                        'sequence_id': packet.ptp.get_field_value('ptp.sequenceid'),
+                        'source_port_id': packet.ptp.get_field_value('ptp.sourceportid'),
+                    })
 
-        # Determine the IGMP type based on the version
-        if igmp_version == '1':
-            igmp_type = igmp_type_map_v1.get(igmp_type_code, f"Unknown IGMPv1 Type ({igmp_type_code})")
-        else:
-            igmp_type = igmp_type_map_v2_v3.get(igmp_type_code, f"Unknown IGMP Type ({igmp_type_code})")
+                    # Handle Sync and Delay Request messages for PTP v1
+                    if packet_type in ['PTP_v1_Sync', 'PTP_v1_Delay_Req']:
+                        packet_info['parent_uuid'] = packet.ptp.get_field_value('ptp.sdr.parentuuid') # MAC address of this slave's currenr master clock
+                        packet_info['grandmasterclock_uuid'] = packet.ptp.get_field_value('ptp.sdr.grandmasterclockuuid') # MAC address of the grand master clock
+                        ptp_timestamp = float(packet.ptp.get_field_value('ptp.sdr.origintimestamp'))
+                    elif packet_type == 'PTP_v1_Follow_Up':
+                        ptp_timestamp = float(packet.ptp.get_field_value('ptp.fu.preciseorigintimestamp'))
+                    elif packet_type == 'PTP_v1_Delay_Resp':
+                        ptp_timestamp = float(packet.ptp.get_field_value('ptp.dr.delayreceipttimestamp'))
+                    else:
+                        ptp_timestamp = None
 
-        packet_info.update({
-            'igmp_version': igmp_version,
-            'igmp_type': igmp_type,
-            'igmp_maddr': igmp_maddr,
-        })
+                    if ptp_timestamp is not None:
+                        local_timestamp = packet_info['local_capture_timestamp']
+                        packet_info['ptp_time_offset'] = local_timestamp - ptp_timestamp
 
-    # Add packet_type to packet_info
-    packet_info['packet_type'] = packet_type
+                else:
+                    packet_type = 'Unknown_PTP_Type'
+
+
+        # Classification logic for IGMP
+        if 'igmp' in packet:
+            packet_type = 'IGMP'
+            igmp_version = packet.igmp.version
+            igmp_type_code = packet.igmp.type
+            igmp_maddr = packet.igmp.maddr
+
+            # Map the hex type codes to strings for IGMPv2 and IGMPv3
+            igmp_type_map_v2_v3 = {
+                '0x11': 'Membership Query',
+                '0x16': 'Membership Report',
+                '0x17': 'Leave Group',
+                # Add any additional or custom IGMP types here for v2 and v3
+            }
+
+            # IGMPv1 specific mapping
+            igmp_type_map_v1 = {
+                '0x12': 'Membership Report',
+                # Add any additional or custom IGMP types here for v1
+            }
+
+            # Determine the IGMP type based on the version
+            if igmp_version == '1':
+                igmp_type = igmp_type_map_v1.get(igmp_type_code, f"Unknown IGMPv1 Type ({igmp_type_code})")
+            else:
+                igmp_type = igmp_type_map_v2_v3.get(igmp_type_code, f"Unknown IGMP Type ({igmp_type_code})")
+
+            packet_info.update({
+                'igmp_version': igmp_version,
+                'igmp_type': igmp_type,
+                'igmp_maddr': igmp_maddr,
+            })
+
+        # Add packet_type to packet_info
+        packet_info['packet_type'] = packet_type
+    
+    except Exception as e:
+        st.error(f"Error classifying packet #{packet_number}: {e}")
 
     return packet_type, packet_info
 
