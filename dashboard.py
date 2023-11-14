@@ -169,7 +169,7 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 # Handle PTP v2 packets
                 if hasattr(packet.ptp, 'v2.versionptp'):
                     ptp_message_type_code = packet.ptp.get_field_value('ptp.v2.messagetype')
-                    normalized_code = str(int(ptp_message_type_code, 16))
+                    normalized_code = str(int(ptp_message_type_code, 16)) # Normalising to int as there might be differences in retrieval in different envs
                     packet_type = ptp_v2_message_types.get(normalized_code, 'Unknown_PTP_Type')
 
                     # Common fields for all PTP v2 packets
@@ -208,7 +208,7 @@ def classify_packet(packet, packet_number, igmp_info=None):
                 # Handle PTP v1 packets
                 elif hasattr(packet.ptp, 'versionptp'):
                     ptp_message_type_code = packet.ptp.get_field_value('ptp.controlfield')
-                    normalized_code = str(int(ptp_message_type_code, 16))
+                    normalized_code = str(int(ptp_message_type_code, 16)) # Normalising to int as there might be differences in retrieval in different envs
                     packet_type = ptp_v1_message_types.get(normalized_code, 'Unknown_PTP_Type')
                     
                     # Common fields for all PTP v1 packets
