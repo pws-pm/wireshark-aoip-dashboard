@@ -318,16 +318,47 @@ def update_packet_data_structure(packet_data, packet_type, packet_info):
     if 'delta_ms' in packet_info:
         packet_data[packet_type]['inter_arrival_times'].append(packet_info['delta_ms'])
 
+def calculate_ctos(sync_packet_info, follow_up_packet_info):
+    # Use the correctly named timestamp fields
+    sync_origin_timestamp = sync_packet_info.get('origin_timestamp', 0)
+    follow_up_precise_origin_timestamp = follow_up_packet_info.get('precise_origin_timestamp', 0)
+
+    # 'local_capture_timestamp' is common for both packet types
+    sync_local_capture_timestamp = sync_packet_info.get('local_capture_timestamp', 0)
+    follow_up_local_capture_timestamp = follow_up_packet_info.get('local_capture_timestamp', 0)
+
+    # Calculate CTOs
+    cto1 = sync_local_capture_timestamp - sync_origin_timestamp
+    cto2 = follow_up_local_capture_timestamp - follow_up_precise_origin_timestamp
+    cto3 = follow_up_precise_origin_timestamp - sync_origin_timestamp
+
+    return {'CTO1': cto1, 'CTO2': cto2, 'CTO3': cto3}
+
+
+
 
 def process_packets(capture):
     packet_data = defaultdict(lambda: defaultdict(list))
     last_timestamps = {}
     igmp_processor = IGMPProcessor(election_timeout=255)
+    last_sync_info = None  # To store the last PTP Sync packet info
 
     for packet_number, packet in enumerate(capture, start=1):
         packet_type, packet_info = classify_packet(packet, packet_number)
 
         calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps)
+        update_packet_data_structure(packet_data, packet_type, packet_info)
+        # Calculate CTO for PTP packets
+        if packet_type in ['PTP_v2_Sync', 'PTP_v2_Follow_Up', 'PTP_v1_Sync', 'PTP_v1_Follow_Up']:
+            if packet_type in ['PTP_v2_Sync', 'PTP_v1_Sync']:
+                # Store the current Sync packet info for subsequent Follow_Up packet
+                last_sync_info = packet_info
+            elif packet_type in ['PTP_v2_Follow_Up', 'PTP_v1_Follow_Up'] and last_sync_info:
+                # Calculate CTOs when a Follow_Up packet is encountered
+                cto_values = calculate_ctos(last_sync_info, packet_info)
+                packet_info.update(cto_values)
+                last_sync_info = None  # Reset after using the Sync info
+        # Append packet_info to packet_data
         update_packet_data_structure(packet_data, packet_type, packet_info)
 
         # Process IGMP separately
@@ -640,6 +671,42 @@ def create_ptp_relationships_dataframe(packet_data):
     device_list = [{'IP Address': ip, **details} for ip, details in devices.items()]
     return pd.DataFrame(device_list)
 
+def plot_cto_variance_box(packet_data):
+    cto_fig = go.Figure()
+
+    # Categories for CTOs
+    cto_categories = ['CTO1', 'CTO2', 'CTO3']
+
+    for cto_category in cto_categories:
+        cto_values = []
+
+        # Collect CTO values from packet data
+        for packet_type, data in packet_data.items():
+            if packet_type in ['PTP_v2_Sync', 'PTP_v2_Follow_Up', 'PTP_v1_Sync', 'PTP_v1_Follow_Up']:
+                cto_values.extend([info[cto_category] for info in data['info'] if cto_category in info])
+
+        # Check if there are any CTO values to plot
+        if cto_values:
+            # Calculate variance of CTO values
+            cto_variance = [value ** 2 for value in cto_values]  # Squaring the values to get variance
+
+            # Add a box plot trace for this category of CTO
+            cto_fig.add_trace(go.Box(
+                y=cto_variance,
+                name=cto_category,
+                boxpoints='outliers',
+                jitter=0.5,
+                marker=dict(size=2)
+            ))
+
+    cto_fig.update_layout(
+        title='Variance of Capture Time Offsets (CTOs)',
+        yaxis_title='Variance of CTOs',
+        template='plotly_white'
+    )
+
+    return cto_fig
+
 
 def visualize_igmp_info(igmp_info):
     # Create a directed graph
@@ -771,6 +838,11 @@ if uploaded_file is not None:
         st.header("PTP Overview")
         ptp_relationships_df = create_ptp_relationships_dataframe(packet_data)
         st.dataframe(ptp_relationships_df)
+
+        # CTO Variance Box Plot
+        st.header("CTO Variance Analysis")
+        cto_variance_fig = plot_cto_variance_box(packet_data)
+        st.plotly_chart(cto_variance_fig)
 
         # IGMP Visualization
         if 'IGMP' in packet_data:
