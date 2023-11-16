@@ -672,40 +672,61 @@ def create_ptp_relationships_dataframe(packet_data):
     return pd.DataFrame(device_list)
 
 def plot_cto_variance_box(packet_data):
-    cto_fig = go.Figure()
+    # Function to calculate median
+    def calculate_median(values):
+        sorted_values = sorted(values)
+        n = len(sorted_values)
+        if n % 2 == 0:
+            return (sorted_values[n//2 - 1] + sorted_values[n//2]) / 2
+        else:
+            return sorted_values[n//2]
 
-    # Categories for CTOs
-    cto_categories = ['CTO1', 'CTO2', 'CTO3']
+    # Split the CTO categories
+    cto_category_group3 = ['CTO3']
 
-    for cto_category in cto_categories:
+    # Create subplots
+    fig = make_subplots(rows=1, cols=2)
+
+    # Aggregate CTO1 and CTO2 values
+    combined_cto_values = []
+    for packet_type, data in packet_data.items():
+        if packet_type in ['PTP_v2_Sync', 'PTP_v1_Sync']:
+            combined_cto_values.extend([info['CTO1'] for info in data['info'] if 'CTO1' in info])
+        elif packet_type in ['PTP_v2_Follow_Up', 'PTP_v1_Follow_Up']:
+            combined_cto_values.extend([info['CTO2'] for info in data['info'] if 'CTO2' in info])
+
+    # Normalize combined CTO1 and CTO2 values
+    if combined_cto_values:
+        median_cto = calculate_median(combined_cto_values)
+        normalized_combined_cto_values = [value - median_cto for value in combined_cto_values]
+
+        fig.add_trace(go.Box(
+            y=normalized_combined_cto_values,
+            name='Origin vs Local timestamps',
+            boxpoints='outliers',
+            jitter=0.5,
+            marker=dict(size=2)
+        ), row=1, col=1)
+
+    # Process CTO 3
+    for cto_category in cto_category_group3:
         cto_values = []
-
-        # Collect CTO values from packet data
         for packet_type, data in packet_data.items():
             if packet_type in ['PTP_v2_Sync', 'PTP_v2_Follow_Up', 'PTP_v1_Sync', 'PTP_v1_Follow_Up']:
                 cto_values.extend([info[cto_category] for info in data['info'] if cto_category in info])
-
-        # Check if there are any CTO values to plot
         if cto_values:
-            # Calculate variance of CTO values
-            cto_variance = [value ** 2 for value in cto_values]  # Squaring the values to get variance
-
-            # Add a box plot trace for this category of CTO
-            cto_fig.add_trace(go.Box(
-                y=cto_variance,
-                name=cto_category,
+            fig.add_trace(go.Box(
+                y=cto_values,
+                name='Sync vs Follow-up at the origin',
                 boxpoints='outliers',
                 jitter=0.5,
                 marker=dict(size=2)
-            ))
+            ), row=1, col=2)
 
-    cto_fig.update_layout(
-        title='Variance of Capture Time Offsets (CTOs)',
-        yaxis_title='Variance of CTOs',
-        template='plotly_white'
-    )
+    # Update layout for the subplots
+    fig.update_layout(title='Variance of Capture Time Offsets (CTOs)', yaxis_title='Variance', template='plotly_white')
 
-    return cto_fig
+    return fig
 
 
 def visualize_igmp_info(igmp_info):
@@ -840,7 +861,7 @@ if uploaded_file is not None:
         st.dataframe(ptp_relationships_df)
 
         # CTO Variance Box Plot
-        st.header("CTO Variance Analysis")
+        st.header("PTP Master: Sync and Follow Up timestamps")
         cto_variance_fig = plot_cto_variance_box(packet_data)
         st.plotly_chart(cto_variance_fig)
 
