@@ -318,21 +318,27 @@ def update_packet_data_structure(packet_data, packet_type, packet_info):
     if 'delta_ms' in packet_info:
         packet_data[packet_type]['inter_arrival_times'].append(packet_info['delta_ms'])
 
-def calculate_ctos(sync_packet_info, follow_up_packet_info):
+def calculate_ctos(sync_packet_info, follow_up_packet_info=None):
     # Use the correctly named timestamp fields
     sync_origin_timestamp = sync_packet_info.get('origin_timestamp', 0)
-    follow_up_precise_origin_timestamp = follow_up_packet_info.get('precise_origin_timestamp', 0)
-
-    # 'local_capture_timestamp' is common for both packet types
     sync_local_capture_timestamp = sync_packet_info.get('local_capture_timestamp', 0)
-    follow_up_local_capture_timestamp = follow_up_packet_info.get('local_capture_timestamp', 0)
 
-    # Calculate CTOs
+    # Calculate CTO1 using only sync packet data
     cto1 = sync_local_capture_timestamp - sync_origin_timestamp
-    cto2 = follow_up_local_capture_timestamp - follow_up_precise_origin_timestamp
-    cto3 = follow_up_precise_origin_timestamp - sync_origin_timestamp
+    cto_results = {'CTO1': cto1}
 
-    return {'CTO1': cto1, 'CTO2': cto2, 'CTO3': cto3}
+    # Calculate CTO2 and CTO3 if follow-up packet data is available
+    if follow_up_packet_info:
+        follow_up_precise_origin_timestamp = follow_up_packet_info.get('precise_origin_timestamp', 0)
+        follow_up_local_capture_timestamp = follow_up_packet_info.get('local_capture_timestamp', 0)
+
+        cto2 = follow_up_local_capture_timestamp - follow_up_precise_origin_timestamp
+        cto3 = follow_up_precise_origin_timestamp - sync_origin_timestamp
+
+        cto_results.update({'CTO2': cto2, 'CTO3': cto3})
+
+    return cto_results
+
 
 
 
@@ -348,16 +354,20 @@ def process_packets(capture):
 
         calculate_inter_arrival_time(packet, packet_info, packet_type, last_timestamps)
         update_packet_data_structure(packet_data, packet_type, packet_info)
+
         # Calculate CTO for PTP packets
-        if packet_type in ['PTP_v2_Sync', 'PTP_v2_Follow_Up', 'PTP_v1_Sync', 'PTP_v1_Follow_Up']:
-            if packet_type in ['PTP_v2_Sync', 'PTP_v1_Sync']:
-                # Store the current Sync packet info for subsequent Follow_Up packet
-                last_sync_info = packet_info
-            elif packet_type in ['PTP_v2_Follow_Up', 'PTP_v1_Follow_Up'] and last_sync_info:
-                # Calculate CTOs when a Follow_Up packet is encountered
-                cto_values = calculate_ctos(last_sync_info, packet_info)
-                packet_info.update(cto_values)
-                last_sync_info = None  # Reset after using the Sync info
+        if packet_type in ['PTP_v2_Sync', 'PTP_v1_Sync']:
+            # Always calculate CTO1 for Sync packets
+            cto_values = calculate_ctos(packet_info)
+            packet_info.update(cto_values)
+            last_sync_info = packet_info
+
+        elif packet_type in ['PTP_v2_Follow_Up', 'PTP_v1_Follow_Up'] and last_sync_info:
+            # Calculate CTOs when a Follow_Up packet is encountered
+            cto_values = calculate_ctos(last_sync_info, packet_info)
+            packet_info.update(cto_values)
+            last_sync_info = None  # Reset after using the Sync info
+
         # Append packet_info to packet_data
         update_packet_data_structure(packet_data, packet_type, packet_info)
 
@@ -369,6 +379,7 @@ def process_packets(capture):
     packet_data['IGMP']['info'] = igmp_processor.get_igmp_info()
 
     return packet_data
+
 
 
 # Function to create a Plotly box plot for inter-arrival times per packet type with log scale for non audio
