@@ -682,62 +682,84 @@ def create_ptp_relationships_dataframe(packet_data):
     device_list = [{'IP Address': ip, **details} for ip, details in devices.items()]
     return pd.DataFrame(device_list)
 
-def plot_cto_variance_box(packet_data):
-    # Function to calculate median
-    def calculate_median(values):
-        sorted_values = sorted(values)
-        n = len(sorted_values)
-        if n % 2 == 0:
-            return (sorted_values[n//2 - 1] + sorted_values[n//2]) / 2
-        else:
-            return sorted_values[n//2]
+def plot_cto_variance_histogram(packet_data):
+    MAX_PACKETS_DISPLAYED = 5
+    PAD_RATIO = 0.05
 
-    # Split the CTO categories
-    cto_category_group3 = ['CTO3']
-
-    # Create subplots
-    fig = make_subplots(rows=1, cols=2)
-
-    # Aggregate CTO1 and CTO2 values
+    # Initialize lists for CTO values and packet numbers
     combined_cto_values = []
+    cto3_values = []
+    packet_numbers_combined = []
+    packet_numbers_cto3 = []
+
+    # Extract CTO values from packet data
     for packet_type, data in packet_data.items():
         if packet_type in ['PTP_v2_Sync', 'PTP_v1_Sync']:
             combined_cto_values.extend([info['CTO1'] for info in data['info'] if 'CTO1' in info])
-        elif packet_type in ['PTP_v2_Follow_Up', 'PTP_v1_Follow_Up']:
+            packet_numbers_combined.extend([info['packet_number'] for info in data['info'] if 'CTO1' in info])
+        if packet_type in ['PTP_v2_Follow_Up', 'PTP_v1_Follow_Up']:
             combined_cto_values.extend([info['CTO2'] for info in data['info'] if 'CTO2' in info])
+            packet_numbers_combined.extend([info['packet_number'] for info in data['info'] if 'CTO2' in info])
+            cto3_values.extend([info['CTO3'] for info in data['info'] if 'CTO3' in info])
+            packet_numbers_cto3.extend([info['packet_number'] for info in data['info'] if 'CTO3' in info])
 
-    # Normalize combined CTO1 and CTO2 values
-    if combined_cto_values:
-        median_cto = calculate_median(combined_cto_values)
-        normalized_combined_cto_values = [value - median_cto for value in combined_cto_values]
+    # Calculate median or mean of the combined CTO1 and CTO2 values
+    center_value = np.median(combined_cto_values)  # or use np.mean(combined_cto_values)
 
-        fig.add_trace(go.Box(
-            y=normalized_combined_cto_values,
-            name='Origin vs Local timestamps',
-            boxpoints='outliers',
-            jitter=0.5,
-            marker=dict(size=2)
-        ), row=1, col=1)
+    # Adjust CTO values to center around 0
+    adjusted_cto_values = [cto - center_value for cto in combined_cto_values]
 
-    # Process CTO 3
-    for cto_category in cto_category_group3:
-        cto_values = []
-        for packet_type, data in packet_data.items():
-            if packet_type in ['PTP_v2_Sync', 'PTP_v2_Follow_Up', 'PTP_v1_Sync', 'PTP_v1_Follow_Up']:
-                cto_values.extend([info[cto_category] for info in data['info'] if cto_category in info])
-        if cto_values:
-            fig.add_trace(go.Box(
-                y=cto_values,
-                name='Sync vs Follow-up at the origin',
-                boxpoints='outliers',
-                jitter=0.5,
-                marker=dict(size=2)
-            ), row=1, col=2)
+    fig = make_subplots(rows=1, cols=2, subplot_titles=['Origin vs Local: Sync & Follow UP', 'Origin: Sync > Follow UP'])
 
-    # Update layout for the subplots
-    fig.update_layout(title='Variance of Capture Time Offsets (CTOs)', yaxis_title='Variance', template='plotly_white')
+    # Plot adjusted combined CTO1 & CTO2
+    plot_cto_histogram(fig, adjusted_cto_values, packet_numbers_combined, 1, MAX_PACKETS_DISPLAYED, PAD_RATIO)
 
+    # Plot CTO3
+    plot_cto_histogram(fig, cto3_values, packet_numbers_cto3, 2, MAX_PACKETS_DISPLAYED, PAD_RATIO)
+
+    fig.update_layout(title='Capture Time Offsets (CTOs) Variance', template='plotly_white', showlegend=False)
     return fig
+
+def plot_cto_histogram(fig, cto_values, packet_numbers, col_index, max_display, pad_ratio):
+    if cto_values:
+        min_cto = max(min(cto_values), 1e-3)  # Ensure min_cto is positive and not too small
+        max_cto = max(cto_values)
+
+        # Ensure max_cto is greater than min_cto to avoid binning issues
+        if max_cto <= min_cto:
+            max_cto = min_cto + 1e-3
+
+        padded_min_cto = min_cto / (1 + pad_ratio)
+        padded_max_cto = max_cto * (1 + pad_ratio)
+
+        time_range = padded_max_cto - padded_min_cto
+        num_bins = min(max(int(time_range * 10000), 20), 100)
+
+        linear_bins = np.linspace(padded_min_cto, padded_max_cto, num_bins)
+        bin_midpoints = (linear_bins[:-1] + linear_bins[1:]) / 2
+        histogram_data = np.histogram(cto_values, bins=linear_bins)
+        bin_counts = histogram_data[0]
+
+        bin_packet_numbers = [[] for _ in range(num_bins)]
+        for cto, packet_num in zip(cto_values, packet_numbers):
+            bin_index = np.digitize(cto, linear_bins) - 1
+            bin_packet_numbers[bin_index].append(packet_num)
+
+        customdata = [tooltip_content_for_bin(bin_packet_numbers[bin_index], max_display) for bin_index in range(num_bins)]
+
+        fig.add_trace(
+            go.Bar(
+                x=bin_midpoints,
+                y=bin_counts,
+                marker_color='blue',
+                customdata=customdata,
+                hovertemplate="<b>Bin Range: %{x:.2f} ms</b><br>Packet index: %{customdata}<extra></extra>"
+            ),
+            row=1,
+            col=col_index
+        )
+
+
 
 
 def visualize_igmp_info(igmp_info):
@@ -856,7 +878,7 @@ if uploaded_file is not None:
         # Inter-arrival times for other packet types
         other_fig = plot_inter_arrival_times_box(packet_data)
         st.plotly_chart(other_fig)
-
+        
         # Display statistics for specific packet types
         if 'PTP_v2_Sync' in packet_data:
             ptp_v2_sync_stats = calculate_summary_stats(packet_data, 'PTP_v2_')
@@ -865,6 +887,7 @@ if uploaded_file is not None:
         if 'PTP_v1_Sync' in packet_data:
             ptp_v1_sync_stats = calculate_summary_stats(packet_data, 'PTP_v1_')
             st.dataframe(ptp_v1_sync_stats)
+        st.markdown('---')
 
         # Create and display the PTP master-client relationships DataFrame
         st.header("PTP Overview")
@@ -872,15 +895,16 @@ if uploaded_file is not None:
         st.dataframe(ptp_relationships_df)
 
         # CTO Variance Box Plot
-        st.header("PTP Master: Sync and Follow Up timestamps")
-        cto_variance_fig = plot_cto_variance_box(packet_data)
+        cto_variance_fig = plot_cto_variance_histogram(packet_data)
         st.plotly_chart(cto_variance_fig)
+        
 
         # IGMP Visualization
         if 'IGMP' in packet_data:
             igmp_info = packet_data['IGMP']['info']
             igmp_visualization_figure = visualize_igmp_info(igmp_info)
             if igmp_visualization_figure is not None:
+                st.markdown('---')
                 st.header("IGMP Traffic Map")
                 st.plotly_chart(igmp_visualization_figure)
 
